@@ -31,14 +31,12 @@ Install via Arduino IDE Library Manager:
 ## First Boot
 
 1. Open Serial Monitor at **115200 baud**
-2. The board will attempt to join the home WiFi configured in `config.h`, then fall back to AP mode
+2. The board will attempt to join the configured WiFi in `config.h`, then fall back to AP mode
 3. Connect your phone or laptop to WiFi **"TI4-HexRiser"** (password: **"twilight4"**) if using AP mode
 4. Open a browser and navigate to the IP shown in Serial Monitor (AP mode default: `http://192.168.3.1`)
 5. The hex grid should appear and sync live with the LED state
 
 ## Web Interface
-
-The browser-based UI is served directly from the board. No external server needed.
 
 - **Brightness slider** - adjusts global LED brightness
 - **Effect buttons** - Rainbow, Pulse, Spiral, Sparkle, Wave, Stop
@@ -91,12 +89,12 @@ For testing without the physical keyboards connected:
 |---|---|
 | `TI4_HexRiser.ino` | Main sketch: setup, loop, game logic, serial handler |
 | `config.h` | Edit this -- pins, WiFi credentials, brightness limits, debug flags |
-| `runtime_settings.h` | Live-mutable shadow of config.h; updated by the settings page |
+| `runtime_settings.h` | Live config updated by the settings page |
 | `led_map.h` | HEX_MAP[61][6][3] mapping hex/side/slot to LED index (0-914) |
 | `hex_neighbors.h` | HEX_NEIGHBORS[61][6] adjacency table |
-| `led_control.h` | FastLED init, per-hex color management, 5 animation effects |
-| `keyboard_control.h` | MCP23017 stub -- follow the 4 IMPLEMENT HERE markers when boards arrive |
-| `web_interface.h` | Full HTML/CSS/JS web UI served from flash |
+| `led_control.h` | FastLED init, per-hex color management, 5 animation effects so far |
+| `keyboard_control.h` | MCP23017 stub out, will finish when the boards actually arrive |
+| `web_interface.h` | Web UI served from root |
 | `settings_page.h` | Settings page HTML served at /settings |
 | `network.h` | WiFi station+AP, HTTP server, poll/cmd/settings routes |
 
@@ -114,11 +112,6 @@ Side 5 (top-left):     3 LEDs  -- slots [base+11, base+12, base+13]
 ```
 
 Where `base = hex_index * 15`. Hex 30 is the center hex.
-
-## Adding Keyboard Support
-
-When MCP23017 boards arrive, open `keyboard_control.h` and follow the four
-`IMPLEMENT HERE` markers in order. No other files need editing.
 
 ## Wiring Reference
 
