@@ -224,13 +224,13 @@ input[type=color] {
     { count:6, start:50, topStart:false },
     { count:5, start:56, topStart:true  }
   ];
-  var maxH = 9;
-  var vbW  = (columns.length - 1) * columnSpacing + 2 * hexRadius + 20;
-  var vbH  = maxH * hexHeight + 10 + 20;
-  svg.setAttribute('viewBox', '0 0 ' + vbW + ' ' + vbH);
+  var maxColHeight = 9;
+  var viewboxW  = (columns.length - 1) * columnSpacing + 2 * hexRadius + 20;
+  var viewboxH  = maxColHeight * hexHeight + 10 + 20;
+  svg.setAttribute('viewBox', '0 0 ' + viewboxW + ' ' + viewboxH);
   svg.setAttribute('style', 'width:100%;height:100%;');
-  var firstCX = hexRadius + 10;
-  var gridCY  = 10 + (maxH * hexHeight) / 2;
+  var firstColCX  = hexRadius + 10;
+  var gridCenterY = 10 + (maxColHeight * hexHeight) / 2;
 
   function getCorners(cx, cy, r) {
     var pts = [];
@@ -248,36 +248,36 @@ input[type=color] {
   function buildGrid(sideGap) {
     // Clear any previous build
     while (svg.lastChild) svg.removeChild(svg.lastChild);
-    columns.forEach(function (col, ci) {
-      var cx  = firstCX + ci * columnSpacing;
-      var cy0 = gridCY - (col.count * hexHeight) / 2 + hexHeight / 2;
-      for (var ri = 0; ri < col.count; ri++) {
-        var idx = col.topStart ? col.start + ri : col.start + (col.count - 1 - ri);
-        var cy  = cy0 + ri * hexHeight;
+    columns.forEach(function (col, colIdx) {
+      var cx       = firstColCX + colIdx * columnSpacing;
+      var colTopCY = gridCenterY - (col.count * hexHeight) / 2 + hexHeight / 2;
+      for (var rowIdx = 0; rowIdx < col.count; rowIdx++) {
+        var hexIdx  = col.topStart ? col.start + rowIdx : col.start + (col.count - 1 - rowIdx);
+        var cy      = colTopCY + rowIdx * hexHeight;
         var corners = getCorners(cx, cy, hexRadius - sideGap);
-        var g = document.createElementNS(NS, 'g');
-        g.setAttribute('id', 'hex-' + idx);
-        g.setAttribute('data-index', idx);
-        g.addEventListener('click', (function (i) { return function () { selectHex(i); }; })(idx));
+        var hexGroup = document.createElementNS(NS, 'g');
+        hexGroup.setAttribute('id', 'hex-' + hexIdx);
+        hexGroup.setAttribute('data-index', hexIdx);
+        hexGroup.addEventListener('click', (function (i) { return function () { selectHex(i); }; })(hexIdx));
         var poly = document.createElementNS(NS, 'polygon');
         poly.setAttribute('points', pointsStr(cx, cy));
         poly.setAttribute('class', 'hex');
-        poly.setAttribute('id', 'hex-poly-' + idx);
-        g.appendChild(poly);
-        for (var si = 0; si < 6; si++) {
-          var p1 = corners[si], p2 = corners[(si + 1) % 6];
+        poly.setAttribute('id', 'hex-poly-' + hexIdx);
+        hexGroup.appendChild(poly);
+        for (var sideIdx = 0; sideIdx < 6; sideIdx++) {
+          var cornerA = corners[sideIdx], cornerB = corners[(sideIdx + 1) % 6];
           var line = document.createElementNS(NS, 'line');
-          line.setAttribute('id', 'hex-side-' + idx + '-' + si);
+          line.setAttribute('id', 'hex-side-' + hexIdx + '-' + sideIdx);
           line.setAttribute('class', 'hex-side');
-          line.setAttribute('x1', p1.x.toFixed(2)); line.setAttribute('y1', p1.y.toFixed(2));
-          line.setAttribute('x2', p2.x.toFixed(2)); line.setAttribute('y2', p2.y.toFixed(2));
-          g.appendChild(line);
+          line.setAttribute('x1', cornerA.x.toFixed(2)); line.setAttribute('y1', cornerA.y.toFixed(2));
+          line.setAttribute('x2', cornerB.x.toFixed(2)); line.setAttribute('y2', cornerB.y.toFixed(2));
+          hexGroup.appendChild(line);
         }
-        var lbl = document.createElementNS(NS, 'text');
-        lbl.setAttribute('x', cx.toFixed(2)); lbl.setAttribute('y', cy.toFixed(2));
-        lbl.textContent = idx;
-        g.appendChild(lbl);
-        svg.appendChild(g);
+        var hexLabel = document.createElementNS(NS, 'text');
+        hexLabel.setAttribute('x', cx.toFixed(2)); hexLabel.setAttribute('y', cy.toFixed(2));
+        hexLabel.textContent = hexIdx;
+        hexGroup.appendChild(hexLabel);
+        svg.appendChild(hexGroup);
       }
     });
   }
@@ -382,11 +382,11 @@ function clearAllHexes() {
 // ============================================================
 // Brightness
 // ============================================================
-var bSlider = document.getElementById('brightness');
-var bVal    = document.getElementById('bright-val');
-bSlider.addEventListener('input', function () {
-  bVal.textContent = bSlider.value;
-  send('BRIGHTNESS:' + bSlider.value);
+var brightnessSlider   = document.getElementById('brightness');
+var brightnessDisplay  = document.getElementById('bright-val');
+brightnessSlider.addEventListener('input', function () {
+  brightnessDisplay.textContent = brightnessSlider.value;
+  send('BRIGHTNESS:' + brightnessSlider.value);
 });
 
 // ============================================================
@@ -428,11 +428,11 @@ function pollHex() {
       _pollBusy = false;
       setOnline(true);
       for (var i = 0; i < 61 && (i + 1) * 6 <= data.length; i++) {
-        var o = i * 6;
+        var byteOffset = i * 6;
         setHexAllSides(i,
-          parseInt(data.slice(o,     o + 2), 16),
-          parseInt(data.slice(o + 2, o + 4), 16),
-          parseInt(data.slice(o + 4, o + 6), 16));
+          parseInt(data.slice(byteOffset,     byteOffset + 2), 16),
+          parseInt(data.slice(byteOffset + 2, byteOffset + 4), 16),
+          parseInt(data.slice(byteOffset + 4, byteOffset + 6), 16));
       }
     })
     .catch(function () {

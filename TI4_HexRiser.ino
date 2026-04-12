@@ -50,10 +50,10 @@ void onHexSelected(int hex) {
 
   // Assign selected hex to active player
   hexOwner[hex] = activePlayer;
-  uint32_t c = players[activePlayer].colorHex;
-  CRGB playerCRGB = CRGB((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
-  setHexColor(hex, playerCRGB);
-  broadcastHexUpdate(hex, playerCRGB.r, playerCRGB.g, playerCRGB.b);
+  uint32_t colorPacked = players[activePlayer].colorHex;
+  CRGB playerColor = CRGB((colorPacked >> 16) & 0xFF, (colorPacked >> 8) & 0xFF, colorPacked & 0xFF);
+  setHexColor(hex, playerColor);
+  broadcastHexUpdate(hex, playerColor.r, playerColor.g, playerColor.b);
 }
 
 // =============================================================================
@@ -106,13 +106,13 @@ void handleSerialCommand() {
   }
 
   if (line.startsWith("hex ")) {
-    int h = line.substring(4).toInt();
-    onHexSelected(h);
+    int hexIdx = line.substring(4).toInt();
+    onHexSelected(hexIdx);
 
   } else if (line.startsWith("player ")) {
-    int p = line.substring(7).toInt();
-    if (p >= 0 && p < MAX_PLAYERS) {
-      activePlayer = (uint8_t)p;
+    int playerIdx = line.substring(7).toInt();
+    if (playerIdx >= 0 && playerIdx < MAX_PLAYERS) {
+      activePlayer = (uint8_t)playerIdx;
       Serial.print(F("Active player: "));
       Serial.println(activePlayer);
     }
@@ -137,10 +137,10 @@ void handleSerialCommand() {
     else Serial.println(F("Unknown effect. Try: rainbow pulse spiral sparkle wave none"));
 
   } else if (line.startsWith("bright ")) {
-    int b = line.substring(7).toInt();
-    setBrightness((uint8_t)constrain(b, 0, rtCfg.maxBrightness));
+    int brightness = line.substring(7).toInt();
+    setBrightness((uint8_t)constrain(brightness, 0, rtCfg.maxBrightness));
     Serial.print(F("Brightness: "));
-    Serial.println(b);
+    Serial.println(brightness);
 
   } else if (line == "clear") {
     setAllHexes(CRGB::Black);
@@ -172,8 +172,8 @@ void handleSerialCommand() {
 // =============================================================================
 void setup() {
   Serial.begin(115200);
-  uint32_t t = millis();
-  while (!Serial && millis() - t < 2000) {}  // wait up to 2 s for Serial Monitor
+  uint32_t serialWaitStart = millis();
+  while (!Serial && millis() - serialWaitStart < 2000) {}  // wait up to 2 s for Serial Monitor
 
   if (rtCfg.debugSerial) {
     Serial.println();
