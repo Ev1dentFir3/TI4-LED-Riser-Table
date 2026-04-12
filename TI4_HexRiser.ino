@@ -131,20 +131,25 @@ void handleSerialCommand() {
         }
       }
     }
-    Serial.println(F("Starting game — selecting speaker..."));
+    Serial.println(F("Starting game — speaker selection runs for ~4 seconds, board will respond after"));
     selectRandomSpeaker();
     transitionToStrategy();
 
   // --- phase <0-4> ---
   } else if (line.startsWith("phase ")) {
-    int phaseNum = line.substring(6).toInt();
+    String phaseArg = line.substring(6);
+    phaseArg.trim();
+    if (phaseArg.length() == 0 || phaseArg.toInt() < 0 || phaseArg.toInt() > 4) {
+      Serial.println(F("Usage: phase <0-4>  (0=Setup 1=Strategy 2=Action 3=Status 4=Agenda)"));
+      return;
+    }
+    int phaseNum = phaseArg.toInt();
     switch (phaseNum) {
       case 0: transitionToSetup();    break;
       case 1: transitionToStrategy(); break;
       case 2: transitionToAction();   break;
       case 3: transitionToStatus();   break;
       case 4: transitionToAgenda();   break;
-      default: Serial.println(F("Phase must be 0-4")); return;
     }
     Serial.print(F("Jumped to phase ")); Serial.println(phaseNum);
 
@@ -232,6 +237,7 @@ void setup() {
   Serial.begin(115200);
   uint32_t serialWaitStart = millis();
   while (!Serial && millis() - serialWaitStart < 2000) {}
+  Serial.setTimeout(500);  // don't block longer than 500ms waiting for a newline
 
   if (rtCfg.debugSerial) {
     Serial.println();

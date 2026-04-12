@@ -245,9 +245,20 @@ input[type=color] {
       .map(function (p) { return p.x.toFixed(2) + ',' + p.y.toFixed(2); }).join(' ');
   }
 
+  // Flat cache: _sideEls[hexIdx * 6 + sideIdx] → SVG line element reference.
+  // Eliminates getElementById on every poll frame (was 366 lookups per 100ms).
+  var _sideEls = new Array(61 * 6).fill(null);
+
+  // Packed RGB per hex for diffing: skip DOM writes when color hasn't changed.
+  // -1 = unknown (forces a write on first poll after build).
+  var _prevColors = new Int32Array(61).fill(-1);
+
   function buildGrid(sideGap) {
-    // Clear any previous build
+    // Clear any previous build and reset caches
     while (svg.lastChild) svg.removeChild(svg.lastChild);
+    _sideEls.fill(null);
+    _prevColors.fill(-1);
+
     columns.forEach(function (col, colIdx) {
       var cx       = firstColCX + colIdx * columnSpacing;
       var colTopCY = gridCenterY - (col.count * hexHeight) / 2 + hexHeight / 2;
@@ -267,10 +278,10 @@ input[type=color] {
         for (var sideIdx = 0; sideIdx < 6; sideIdx++) {
           var cornerA = corners[sideIdx], cornerB = corners[(sideIdx + 1) % 6];
           var line = document.createElementNS(NS, 'line');
-          line.setAttribute('id', 'hex-side-' + hexIdx + '-' + sideIdx);
           line.setAttribute('class', 'hex-side');
           line.setAttribute('x1', cornerA.x.toFixed(2)); line.setAttribute('y1', cornerA.y.toFixed(2));
           line.setAttribute('x2', cornerB.x.toFixed(2)); line.setAttribute('y2', cornerB.y.toFixed(2));
+          _sideEls[hexIdx * 6 + sideIdx] = line;  // cache the reference
           hexGroup.appendChild(line);
         }
         var hexLabel = document.createElementNS(NS, 'text');
@@ -291,32 +302,49 @@ input[type=color] {
     .then(function (cfg) { buildGrid(cfg.sideGap != null ? +cfg.sideGap : 4); })
     .catch(function ()  { buildGrid(4); });
 
-  // Bridge functions (match 61_hex_grid.html API exactly)
-  window.setHexSide = function (i, s, r, g, b) {
-    var el = document.getElementById('hex-side-' + i + '-' + s);
-    if (el) el.style.stroke = 'rgb(' + r + ',' + g + ',' + b + ')';
-  };
+  // Bridge functions — use cached element refs, skip DOM write when color unchanged.
   window.setHexAllSides = function (i, r, g, b) {
+    var packed = (r << 16) | (g << 8) | b;
+    if (_prevColors[i] === packed) return;  // nothing changed, skip
+    _prevColors[i] = packed;
+    var stroke = 'rgb(' + r + ',' + g + ',' + b + ')';
+    var base = i * 6;
     for (var s = 0; s < 6; s++) {
-      var el = document.getElementById('hex-side-' + i + '-' + s);
-      if (el) el.style.stroke = 'rgb(' + r + ',' + g + ',' + b + ')';
+      var el = _sideEls[base + s];
+      if (el) el.style.stroke = stroke;
     }
   };
+  window.setHexSide = function (i, s, r, g, b) {
+    _prevColors[i] = -1;  // invalidate so next setHexAllSides rewrites all sides
+    var el = _sideEls[i * 6 + s];
+    if (el) el.style.stroke = 'rgb(' + r + ',' + g + ',' + b + ')';
+  };
   window.clearHexSides = function (i) {
+    _prevColors[i] = -1;
+    var base = i * 6;
     for (var s = 0; s < 6; s++) {
-      var el = document.getElementById('hex-side-' + i + '-' + s);
+      var el = _sideEls[base + s];
       if (el) el.style.stroke = 'transparent';
     }
   };
   window.setAllSides = function (r, g, b) {
-    document.querySelectorAll('.hex-side').forEach(function (el) {
-      el.style.stroke = 'rgb(' + r + ',' + g + ',' + b + ')';
-    });
+    var packed = (r << 16) | (g << 8) | b;
+    var stroke = 'rgb(' + r + ',' + g + ',' + b + ')';
+    for (var i = 0; i < 61; i++) {
+      if (_prevColors[i] === packed) continue;
+      _prevColors[i] = packed;
+      var base = i * 6;
+      for (var s = 0; s < 6; s++) {
+        var el = _sideEls[base + s];
+        if (el) el.style.stroke = stroke;
+      }
+    }
   };
   window.clearAllSides = function () {
-    document.querySelectorAll('.hex-side').forEach(function (el) {
-      el.style.stroke = 'transparent';
-    });
+    _prevColors.fill(-1);
+    for (var i = 0; i < 61 * 6; i++) {
+      if (_sideEls[i]) _sideEls[i].style.stroke = 'transparent';
+    }
   };
 })();
 

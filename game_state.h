@@ -273,6 +273,36 @@ static void handleColorLockIn(uint8_t playerIndex) {
     Serial.print(playerIndex + 1);
     Serial.println(F(" locked color"));
   }
+
+  // If any other unlocked player has the same color, bump them to a free color.
+  // "Free" means not taken (locked) and not currently selected by any other unlocked player.
+  for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+    if (i == playerIndex || !players[i].active || players[i].colorLocked) continue;
+    if (players[i].selectedColorIndex != colorIndex) continue;
+
+    // Build a set of colors currently in use by unlocked players (excluding player i)
+    bool colorInUse[8];
+    for (uint8_t c = 0; c < 8; c++) colorInUse[c] = gameState.colorTaken[c];
+    for (uint8_t j = 0; j < MAX_PLAYERS; j++) {
+      if (j == i || !players[j].active || players[j].colorLocked) continue;
+      colorInUse[players[j].selectedColorIndex] = true;
+    }
+
+    // Assign the first completely free color
+    for (uint8_t c = 0; c < 8; c++) {
+      if (!colorInUse[c]) {
+        players[i].selectedColorIndex = c;
+        players[i].colorHex           = COLOR_PALETTE[c];
+        if (rtCfg.debugSerial) {
+          Serial.print(F("Game: Player "));
+          Serial.print(i + 1);
+          Serial.print(F(" auto-reassigned to color "));
+          Serial.println(c + 1);
+        }
+        break;
+      }
+    }
+  }
 }
 
 // Randomly selects the speaker from active players with a roulette animation.
@@ -398,12 +428,27 @@ static void handleStrategyCardSelection(uint8_t playerIndex, uint8_t cardKey) {
   uint8_t currentPicker = gameState.strategyPickOrder[gameState.currentPickIndex];
   if (playerIndex != currentPicker) return;  // not your turn
   if (cardKey < 1 || cardKey > 8) return;
+
+  // Reject if another player already locked this card
+  for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+    if (i == playerIndex) continue;
+    if (players[i].strategyLocked && players[i].strategyCard == cardKey) {
+      flashUnavailableColor(playerIndex);  // red flash = taken
+      if (rtCfg.debugSerial) {
+        Serial.print(F("Game: Card "));
+        Serial.print(cardKey);
+        Serial.println(F(" already taken"));
+      }
+      return;
+    }
+  }
+
   players[playerIndex].strategyCard = cardKey;
 
   if (rtCfg.debugSerial) {
     Serial.print(F("Game: Player "));
     Serial.print(playerIndex + 1);
-    Serial.print(F(" selected strategy card "));
+    Serial.print(F(" previewing strategy card "));
     Serial.println(cardKey);
   }
 }
