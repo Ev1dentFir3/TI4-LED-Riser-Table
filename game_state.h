@@ -200,10 +200,10 @@ static void flashUnavailableColor(uint8_t playerIndex) {
   for (int i = 0; i < 3; i++) {
     setHexColor(homeHex, CRGB::Red);
     pushLEDs();
-    delay(100);
+    animDelay(100);
     setHexColor(homeHex, CRGB::Black);
     pushLEDs();
-    delay(100);
+    animDelay(100);
   }
 }
 
@@ -239,7 +239,6 @@ static void updateJoinModeDisplay() {
       setHexColor(players[i].homeHex, fadedColor);
     }
   }
-  pushLEDs();
 }
 
 // Player presses key 1–8 to preview a color during PHASE_SETUP.
@@ -316,8 +315,10 @@ static void rouletteHighlight(const uint8_t* activePlayers, uint8_t count, uint8
 }
 
 // Selects a random speaker via a roulette animation.
-// Circles through active players SPEAKER_ROULETTE_LAPS times at full speed,
-// then does one final lap that ramps from fast to slow, stopping on the winner.
+// Circles all active player home hexes sequentially at a constant pace:
+//   - SPEAKER_ROULETTE_LAPS full laps (10 by default)
+//   - Then continues into the next lap until landing exactly on the winner
+// Each step takes SPEAKER_ROULETTE_STEP_MS (500 ms by default).
 static void selectRandomSpeaker() {
   uint8_t activePlayers[MAX_PLAYERS];
   uint8_t count = 0;
@@ -326,36 +327,35 @@ static void selectRandomSpeaker() {
   }
   if (count == 0) return;
 
-  // Pick winner now so the slowdown lap can land on them precisely
   uint8_t winnerPos      = random8(count);
   gameState.speakerIndex = activePlayers[winnerPos];
 
-  // --- Fast phase: SPEAKER_ROULETTE_LAPS full loops ---
-  int fastSteps = SPEAKER_ROULETTE_LAPS * (int)count;
-  for (int step = 0; step < fastSteps; step++) {
-    rouletteHighlight(activePlayers, count, (uint8_t)(step % count));
-    delay(80);
+  if (rtCfg.debugSerial) {
+    Serial.print(F("Roulette: "));
+    Serial.print(SPEAKER_ROULETTE_LAPS);
+    Serial.print(F(" laps + "));
+    Serial.print(winnerPos + 1);
+    Serial.print(F(" extra steps → P"));
+    Serial.println(gameState.speakerIndex + 1);
   }
 
-  // --- Slowdown phase: one extra loop, ramping 80ms → 500ms, ending on winner ---
-  // Total steps = count (full extra loop) + winnerPos (to land exactly on winner)
-  int slowSteps = (int)count + (int)winnerPos;
-  for (int step = 0; step < slowSteps; step++) {
-    rouletteHighlight(activePlayers, count, (uint8_t)((fastSteps + step) % count));
-    // Linear ramp: 80ms at step 0, 500ms at last step
-    int delayMs = (slowSteps > 1) ? (80 + (500 - 80) * step / (slowSteps - 1)) : 500;
-    delay(delayMs);
+  // SPEAKER_ROULETTE_LAPS full laps end at position (count-1).
+  // From (count-1), reaching winnerPos takes (winnerPos+1) more steps.
+  int totalSteps = (int)SPEAKER_ROULETTE_LAPS * (int)count + (int)winnerPos + 1;
+  for (int step = 0; step < totalSteps; step++) {
+    rouletteHighlight(activePlayers, count, (uint8_t)(step % count));
+    animDelay(SPEAKER_ROULETTE_STEP_MS);
   }
 
   // --- Winner landed — flash gold 3× ---
   static const CRGB gold = CRGB(0xFF, 0xD7, 0x00);
   for (int i = 0; i < 3; i++) {
     setHexColor(players[gameState.speakerIndex].homeHex, CRGB::Black);
-    pushLEDs(); delay(200);
+    pushLEDs(); animDelay(200);
     setHexColor(players[gameState.speakerIndex].homeHex, gold);
-    pushLEDs(); delay(200);
+    pushLEDs(); animDelay(200);
   }
-  delay(800);
+  animDelay(800);
 
   if (rtCfg.debugSerial) {
     Serial.print(F("Game: Speaker is Player "));
@@ -396,6 +396,7 @@ static void buildStrategyPickOrder() {
 }
 
 // Colors a player's home hex and all its neighbors with the given color.
+// Does NOT push — callers that need an immediate update must call pushLEDs() themselves.
 static void colorPlayerArea(uint8_t playerIndex, CRGB color) {
   uint8_t homeHex = players[playerIndex].homeHex;
   setHexColor(homeHex, color);
@@ -403,7 +404,6 @@ static void colorPlayerArea(uint8_t playerIndex, CRGB color) {
     int neighbor = HEX_NEIGHBORS[homeHex][dir];
     if (neighbor >= 0) setHexColor((uint8_t)neighbor, color);
   }
-  pushLEDs();
 }
 
 // Called every loop() during PHASE_STRATEGY.
@@ -437,7 +437,6 @@ static void updateStrategyPickerPulse() {
       setHexColor(players[i].homeHex, playerColor);
     }
   }
-  pushLEDs();
 }
 
 // Player presses key 1–8 to select a strategy card.
@@ -485,6 +484,7 @@ static void handleStrategyLockIn(uint8_t playerIndex) {
   stratColor.g = (STRATEGY_COLORS[cardIdx] >>  8) & 0xFF;
   stratColor.b =  STRATEGY_COLORS[cardIdx]        & 0xFF;
   colorPlayerArea(playerIndex, stratColor);
+  pushLEDs();  // immediate feedback on lock-in
 
   gameState.currentPickIndex++;
 
@@ -563,8 +563,6 @@ static void updateActivePlayerPulse() {
   uint8_t visited[NUM_HEXES] = {0};
   visited[homeHex] = 1;
   spreadPulseToNeighbors(homeHex, pulseColor, EDGE_PULSE_SPREAD, visited);
-
-  pushLEDs();
 }
 
 // Player presses Key 14 to pass — removed from initiative order this round.
@@ -686,7 +684,6 @@ static void updateStatusPulse() {
     }
     setHexColor(h, color);
   }
-  pushLEDs();
 }
 
 // Player presses Key 15 in status phase to mark themselves ready.
@@ -719,7 +716,6 @@ static void updateAgendaPulse() {
   CRGB white = CRGB::White;
   white.nscale8(pulseBrightness);
   setAllHexes(white);
-  pushLEDs();
 }
 
 // Resets all per-round player flags so the next round starts clean.

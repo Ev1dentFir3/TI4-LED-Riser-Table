@@ -71,7 +71,8 @@
 #define TURN_WARNING_MS      300000   // 5 min before red pulse warning
 #define BOOT_ANIM_SPEED_MS   50       // ms between hex advances in boot snake
 #define BOOT_ANIM_TAIL           5    // number of hexes lit at once in boot snake
-#define SPEAKER_ROULETTE_LAPS   10    // full loops around players before slowing to winner
+#define SPEAKER_ROULETTE_LAPS     10   // full loops around players before landing on winner
+#define SPEAKER_ROULETTE_STEP_MS 500  // ms per step in the roulette animation
 #define JOIN_FADE_PERIOD_MS   1000    // unlocked color fade cycle (ms)
 #define JOIN_FADE_MIN        51       // min brightness when fading (20%)
 #define JOIN_FADE_MAX        255      // max brightness when fading (100%)
