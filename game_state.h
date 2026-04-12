@@ -675,14 +675,6 @@ static void resetRoundState() {
 // SECTION 9: Phase Transitions
 // =============================================================================
 
-// Inline center-out pulse reusing ANIM_SPIRAL (avoids circular include with animations.h).
-static void runCenterOutPulse() {
-  startEffect(ANIM_SPIRAL);
-  uint32_t startMs = millis();
-  while (millis() - startMs < 1800) updateLEDs();
-  stopEffect();
-}
-
 void transitionToSetup() {
   gameState.currentPhase = PHASE_SETUP;
   memset(gameState.colorTaken, 0, sizeof(gameState.colorTaken));
