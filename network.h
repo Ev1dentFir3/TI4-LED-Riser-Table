@@ -63,8 +63,8 @@ void initNetwork() {
 
     WiFi.begin(rtCfg.homeSSID, rtCfg.homePass);
 
-    uint32_t t = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t < rtCfg.homeTimeoutMs) {
+    uint32_t connectStartMs = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - connectStartMs < rtCfg.homeTimeoutMs) {
       delay(200);
     }
 
@@ -97,8 +97,8 @@ void initNetwork() {
 
     WiFi.beginAP(rtCfg.apSSID, rtCfg.apPass);
 
-    uint32_t t = millis();
-    while (WiFi.status() != WL_AP_LISTENING && millis() - t < 5000) {
+    uint32_t apStartMs = millis();
+    while (WiFi.status() != WL_AP_LISTENING && millis() - apStartMs < 5000) {
       delay(100);
     }
 
@@ -310,24 +310,24 @@ void parseWSCommand(const char* msg) {
     if (colorStr) {
       colorStr++;
       uint32_t rgb = strtoul(colorStr, nullptr, 16);
-      CRGB c((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
-      setHexColor(hex, c);
-      broadcastHexUpdate(hex, c.r, c.g, c.b);
+      CRGB color((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+      setHexColor(hex, color);
+      broadcastHexUpdate(hex, color.r, color.g, color.b);
     }
 
   } else if (strncmp(msg, "SETHEXSIDE:", 11) == 0) {
     int hex = atoi(msg + 11);
-    const char* p = strchr(msg + 11, ':');
-    if (p) {
-      p++;
-      int side = atoi(p);
-      const char* colorStr = strchr(p, ':');
+    const char* sidePtr = strchr(msg + 11, ':');
+    if (sidePtr) {
+      sidePtr++;
+      int side = atoi(sidePtr);
+      const char* colorStr = strchr(sidePtr, ':');
       if (colorStr) {
         colorStr++;
         uint32_t rgb = strtoul(colorStr, nullptr, 16);
-        CRGB c((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
-        setHexSideColor(hex, side, c);
-        broadcastHexSideUpdate(hex, side, c.r, c.g, c.b);
+        CRGB color((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+        setHexSideColor(hex, side, color);
+        broadcastHexSideUpdate(hex, side, color.r, color.g, color.b);
       }
     }
 
@@ -349,8 +349,8 @@ void broadcastAllHexColors() {
   for (int i = 0; i < NUM_HEXES; i++) {
     int idx = HEX_MAP[i][0][0];          // side 0, slot 0 is always a valid LED
     if (idx < 0 || idx >= NUM_LEDS) idx = i * LEDS_PER_HEX;  // safety fallback
-    CRGB c = leds[idx];
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X%02X%02X", c.r, c.g, c.b);
+    CRGB color = leds[idx];
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X%02X%02X", color.r, color.g, color.b);
   }
   sseSend(buf);
 }
@@ -394,8 +394,8 @@ void servePoll() {
   for (int i = 0; i < NUM_HEXES; i++) {
     int idx = HEX_MAP[i][0][0];
     if (idx < 0 || idx >= NUM_LEDS) idx = i * LEDS_PER_HEX;
-    CRGB c = leds[idx];
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X%02X%02X", c.r, c.g, c.b);
+    CRGB color = leds[idx];
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X%02X%02X", color.r, color.g, color.b);
   }
   pendingClient.println(F("HTTP/1.1 200 OK"));
   pendingClient.println(F("Content-Type: text/plain"));
@@ -492,13 +492,13 @@ void parseSaveSettings(const String& query) {
   // Walk key=value pairs separated by '&'
   int pos = 0;
   while (pos < (int)query.length()) {
-    int eq  = query.indexOf('=', pos);
-    if (eq < 0) break;
-    int amp = query.indexOf('&', eq + 1);
-    if (amp < 0) amp = query.length();
+    int eqPos  = query.indexOf('=', pos);
+    if (eqPos < 0) break;
+    int ampPos = query.indexOf('&', eqPos + 1);
+    if (ampPos < 0) ampPos = query.length();
 
-    String key = query.substring(pos, eq);
-    String val = query.substring(eq + 1, amp);
+    String key = query.substring(pos, eqPos);
+    String val = query.substring(eqPos + 1, ampPos);
 
     char decoded[128];
     urlDecode(val.c_str(), decoded, sizeof(decoded));
@@ -519,7 +519,7 @@ void parseSaveSettings(const String& query) {
     else if (key == "debugLed")          rtCfg.debugLed          = (decoded[0] == '1');
     else if (key == "debugKeyboard")     rtCfg.debugKeyboard     = (decoded[0] == '1');
 
-    pos = amp + 1;
+    pos = ampPos + 1;
   }
 
   // Apply immediate non-WiFi changes

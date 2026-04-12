@@ -184,12 +184,12 @@ static void tickSpiral(uint32_t elapsed) {
   uint8_t hue = (elapsed / 10) & 0xFF;
   FastLED.clear();
 
-  for (int r = 0; r <= activeRing && r < 5; r++) {
-    CRGB c = CHSV(hue + r * 40, 255, 200);
-    for (int j = 0; j < 24; j++) {
-      uint8_t h = SPIRAL_RINGS[r][j];
-      if (h == 255) break;
-      setHexColor(h, c);
+  for (int ringIdx = 0; ringIdx <= activeRing && ringIdx < 5; ringIdx++) {
+    CRGB color = CHSV(hue + ringIdx * 40, 255, 200);
+    for (int entryIdx = 0; entryIdx < 24; entryIdx++) {
+      uint8_t hexIdx = SPIRAL_RINGS[ringIdx][entryIdx];
+      if (hexIdx == 255) break;
+      setHexColor(hexIdx, color);
     }
   }
 }
@@ -200,8 +200,8 @@ static void tickSparkle(uint32_t elapsed) {
   fadeToBlackBy(leds, NUM_LEDS, 10);
   // Randomly light a hex
   if (random8() < 40) {
-    int h = random8(NUM_HEXES);
-    setHexColor(h, CRGB::White);
+    int hexIdx = random8(NUM_HEXES);
+    setHexColor(hexIdx, CRGB::White);
   }
 }
 

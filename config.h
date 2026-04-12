@@ -49,7 +49,7 @@
 
 #define HTTP_PORT       80
 #define WS_PORT         81
-#define BROADCAST_MS    100    // push full LED state to browser (ms)
+#define BROADCAST_MS    50    // push full LED state to browser (ms)
 
 // -----------------------------------------------------------------------------
 // Debug / Test Flags
