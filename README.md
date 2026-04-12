@@ -65,13 +65,100 @@ Navigate to the gear icon at the bottom of the sidebar to access runtime setting
 
 ## Serial Commands
 
-For testing without the physical keyboards connected:
+Open Serial Monitor at **115200 baud**. All commands are case-insensitive where noted.
+
+### Game Simulation Commands
+
+These simulate physical keyboard presses and game flow for testing without hardware.
 
 | Command | Effect |
 |---|---|
-| `hex N` | Select hex N (0-60) |
-| `player N` | Set active player 0-7 |
-| `color RRGGBB` | Set active player color |
+| `setplayers <4-8>` | Set how many players are active and restart the setup phase |
+| `kb <1-8> <0-15>` | Simulate player N pressing key K on their keyboard |
+| `startgame` | GM force-start: locks any unlocked players and runs speaker selection |
+| `phase <0-4>` | Jump directly to a phase (0=Setup, 1=Strategy, 2=Action, 3=Status, 4=Agenda) |
+| `battle <P1> <P2>` | Trigger battle mode between two players (e.g. `battle 1 3`) |
+| `status` | Print current phase, all player states, home hexes, and WiFi IP |
+
+### Keyboard Key Reference
+
+Each player has a 4x4 keyboard (keys 0-15). What each key does depends on the current phase:
+
+| Key | Setup phase | Strategy phase | Action phase | Status phase | Agenda phase |
+|---|---|---|---|---|---|
+| 1-8 | Select color (preview only, not locked yet) | Select strategy card 1-8 | -- | -- | -- |
+| 13 | -- | -- | End battle mode | -- | -- |
+| 14 | -- | -- | Pass this round | -- | -- |
+| 15 | Lock in color choice | Lock in strategy card and hand off | End turn | Mark ready | End agenda (speaker only) |
+| 0 | Start game (any player, only after all locked) | -- | -- | -- | -- |
+
+### Full Round Walkthrough
+
+The board boots with 6 players active by default. To simulate a complete round:
+
+**Setup phase (color selection)**
+```
+status                  check starting state
+setplayers 4            use a 4-player game for simplicity
+kb 1 1                  P1 previews Red
+kb 1 15                 P1 locks Red
+kb 2 2                  P2 previews Blue
+kb 2 15                 P2 locks Blue
+kb 3 3                  P3 previews Green
+kb 3 15                 P3 locks Green
+kb 4 4                  P4 previews Yellow
+kb 4 15                 P4 locks Yellow
+kb 1 0                  GM starts game -- speaker roulette runs, then moves to Strategy
+```
+
+**Strategy phase (card selection)**
+```
+status                  check pick order (speaker goes first)
+kb 1 1                  current picker selects card 1 (Leadership)
+kb 1 15                 picker locks card, next player's home hex starts pulsing
+kb 2 4                  next picker selects card 4 (Construction)
+kb 2 15                 locks, next picker
+kb 3 6                  selects card 6 (Warfare)
+kb 3 15                 locks
+kb 4 8                  selects card 8 (Imperial)
+kb 4 15                 locks -- all done, center pulse plays, moves to Action
+```
+
+**Action phase (taking turns)**
+
+Initiative order is determined by card number (lowest card = first turn).
+```
+status                  check initiative order
+kb 1 15                 active player ends their turn, passes to next
+kb 2 15                 next player ends turn
+kb 3 14                 P3 passes this round (home hex dims to 50%)
+kb 4 15                 P4 ends turn
+kb 1 15                 P1 ends turn again (cycling through non-passed players)
+kb 2 14                 P2 passes
+kb 4 14                 P4 passes
+kb 1 14                 P1 passes -- all passed, moves to Status automatically
+```
+
+**Status phase (end-of-round cleanup)**
+
+The board splits into radial slices, one per player, each pulsing their color.
+```
+kb 1 15                 P1 marks ready (their slice goes solid)
+kb 2 15                 P2 marks ready
+kb 3 15                 P3 marks ready
+kb 4 15                 P4 marks ready -- all ready, moves to Agenda automatically
+```
+
+**Agenda phase**
+```
+status                  check who the speaker is
+kb 1 15                 speaker ends agenda -- round resets, moves back to Strategy
+```
+
+### Utility Commands
+
+| Command | Effect |
+|---|---|
 | `effect rainbow` | Start rainbow animation |
 | `effect pulse` | Pulsing glow with slow hue drift |
 | `effect spiral` | Spiral outward from center hex |
@@ -80,20 +167,21 @@ For testing without the physical keyboards connected:
 | `effect none` | Stop animation and clear |
 | `bright N` | Set brightness 0-200 |
 | `clear` | Clear all hexes |
-| `test` | Run LED hardware test |
-| `status` | Print current game state and IP |
+| `test` | Run LED hardware test (scans all 915 LEDs) |
 
 ## File Map
 
 | File | Purpose |
 |---|---|
-| `TI4_HexRiser.ino` | Main sketch: setup, loop, game logic, serial handler |
-| `config.h` | Edit this -- pins, WiFi credentials, brightness limits, debug flags |
+| `TI4_HexRiser.ino` | Main sketch: setup, loop, serial handler, key/hex callbacks |
+| `config.h` | Edit this -- pins, WiFi credentials, brightness limits, debug flags, game constants |
 | `runtime_settings.h` | Live config updated by the settings page |
+| `game_state.h` | Full game state machine: all phases, player data, key dispatch |
+| `animations.h` | Boot snake animation and center-out phase transition |
 | `led_map.h` | HEX_MAP[61][6][3] mapping hex/side/slot to LED index (0-914) |
 | `hex_neighbors.h` | HEX_NEIGHBORS[61][6] adjacency table |
-| `led_control.h` | FastLED init, per-hex color management, 5 animation effects so far |
-| `keyboard_control.h` | MCP23017 stub out, will finish when the boards actually arrive |
+| `led_control.h` | FastLED init, per-hex color management, 5 animation effects |
+| `keyboard_control.h` | MCP23017 stub -- follow the IMPLEMENT HERE markers when boards arrive |
 | `web_interface.h` | Web UI served from root |
 | `settings_page.h` | Settings page HTML served at /settings |
 | `network.h` | WiFi station+AP, HTTP server, poll/cmd/settings routes |
