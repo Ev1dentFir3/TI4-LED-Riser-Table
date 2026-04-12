@@ -89,8 +89,8 @@
 #define AGENDA_PULSE_MAX     128
 
 // Home hex assignments per player count (position order matches keyboard order)
-static const uint8_t HOME_HEXES_4P[4] = { 12, 16, 44, 48 };
-static const uint8_t HOME_HEXES_5P[5] = {  6,  9, 33, 51, 54 };
+static const uint8_t HOME_HEXES_4P[4] = { 12, 44, 48, 16 };
+static const uint8_t HOME_HEXES_5P[5] = {  9, 54, 51, 33,  6 };
 static const uint8_t HOME_HEXES_6P[6] = {  27, 54, 51, 33, 6, 9 };
 static const uint8_t HOME_HEXES_7P[7] = {  26 ,55, 58, 50, 5, 2, 10 };
 static const uint8_t HOME_HEXES_8P[8] = {  26 ,55, 58, 50, 34, 5, 2, 10 };
