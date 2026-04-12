@@ -38,8 +38,8 @@
 // -----------------------------------------------------------------------------
 // Station mode (home network) — tried first.
 // Leave WIFI_HOME_SSID empty ("") to skip and go straight to AP mode.
-#define WIFI_HOME_SSID      ""               // your home network SSID (leave blank to use AP mode only)
-#define WIFI_HOME_PASSWORD  ""               // your home network password
+#define WIFI_HOME_SSID      "The Network"               // your home network SSID (leave blank to use AP mode only)
+#define WIFI_HOME_PASSWORD  "letmeinplease"               // your home network password
 #define WIFI_HOME_TIMEOUT_MS 10000   // how long to wait before giving up
 
 // Fallback Access Point — used when home network is unavailable or skipped.
@@ -70,8 +70,9 @@
 // Timing constants
 #define TURN_WARNING_MS      300000   // 5 min before red pulse warning
 #define BOOT_ANIM_SPEED_MS   50       // ms between hex advances in boot snake
-#define BOOT_ANIM_TAIL       5        // number of hexes lit at once in boot snake
-#define JOIN_FADE_PERIOD_MS  1000     // unlocked color fade cycle (ms)
+#define BOOT_ANIM_TAIL           5    // number of hexes lit at once in boot snake
+#define SPEAKER_ROULETTE_LAPS   10    // full loops around players before slowing to winner
+#define JOIN_FADE_PERIOD_MS   1000    // unlocked color fade cycle (ms)
 #define JOIN_FADE_MIN        51       // min brightness when fading (20%)
 #define JOIN_FADE_MAX        255      // max brightness when fading (100%)
 
@@ -90,9 +91,9 @@
 // Home hex assignments per player count (position order matches keyboard order)
 static const uint8_t HOME_HEXES_4P[4] = { 12, 16, 44, 48 };
 static const uint8_t HOME_HEXES_5P[5] = {  6,  9, 33, 51, 54 };
-static const uint8_t HOME_HEXES_6P[6] = {  6,  9, 27, 33, 51, 54 };
-static const uint8_t HOME_HEXES_7P[7] = {  2,  5, 10, 26, 50, 55, 58 };
-static const uint8_t HOME_HEXES_8P[8] = {  2,  5, 10, 26, 34, 50, 55, 58 };
+static const uint8_t HOME_HEXES_6P[6] = {  27, 54, 51, 33, 6, 9 };
+static const uint8_t HOME_HEXES_7P[7] = {  26 ,55, 58, 50, 5, 2, 10 };
+static const uint8_t HOME_HEXES_8P[8] = {  26 ,55, 58, 50, 34, 5, 2, 10 };
 
 // Returns the home hex for the Nth active-player position given a player count
 inline uint8_t getPlayerHomeHex(uint8_t positionIndex, uint8_t numPlayers) {

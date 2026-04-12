@@ -305,7 +305,19 @@ static void handleColorLockIn(uint8_t playerIndex) {
   }
 }
 
-// Randomly selects the speaker from active players with a roulette animation.
+// Highlights one player gold and blacks out all others. Used by selectRandomSpeaker.
+static void rouletteHighlight(const uint8_t* activePlayers, uint8_t count, uint8_t pos) {
+  static const CRGB gold = CRGB(0xFF, 0xD7, 0x00);
+  for (uint8_t p = 0; p < count; p++) {
+    setHexColor(players[activePlayers[p]].homeHex, CRGB::Black);
+  }
+  setHexColor(players[activePlayers[pos % count]].homeHex, gold);
+  pushLEDs();
+}
+
+// Selects a random speaker via a roulette animation.
+// Circles through active players SPEAKER_ROULETTE_LAPS times at full speed,
+// then does one final lap that ramps from fast to slow, stopping on the winner.
 static void selectRandomSpeaker() {
   uint8_t activePlayers[MAX_PLAYERS];
   uint8_t count = 0;
@@ -314,24 +326,29 @@ static void selectRandomSpeaker() {
   }
   if (count == 0) return;
 
-  // Roulette: spin through players, slowing down
-  for (int spin = 0; spin < 20; spin++) {
-    uint8_t shown = activePlayers[spin % count];
-    for (uint8_t p = 0; p < count; p++) {
-      setHexColor(players[activePlayers[p]].homeHex, CRGB::Black);
-    }
-    CRGB gold;
-    gold.r = 0xFF; gold.g = 0xD7; gold.b = 0x00;
-    setHexColor(players[shown].homeHex, gold);
-    pushLEDs();
-    delay(60 + spin * 12);  // slow down over time
+  // Pick winner now so the slowdown lap can land on them precisely
+  uint8_t winnerPos      = random8(count);
+  gameState.speakerIndex = activePlayers[winnerPos];
+
+  // --- Fast phase: SPEAKER_ROULETTE_LAPS full loops ---
+  int fastSteps = SPEAKER_ROULETTE_LAPS * (int)count;
+  for (int step = 0; step < fastSteps; step++) {
+    rouletteHighlight(activePlayers, count, (uint8_t)(step % count));
+    delay(80);
   }
 
-  // Final pick
-  gameState.speakerIndex = activePlayers[random8(count)];
+  // --- Slowdown phase: one extra loop, ramping 80ms → 500ms, ending on winner ---
+  // Total steps = count (full extra loop) + winnerPos (to land exactly on winner)
+  int slowSteps = (int)count + (int)winnerPos;
+  for (int step = 0; step < slowSteps; step++) {
+    rouletteHighlight(activePlayers, count, (uint8_t)((fastSteps + step) % count));
+    // Linear ramp: 80ms at step 0, 500ms at last step
+    int delayMs = (slowSteps > 1) ? (80 + (500 - 80) * step / (slowSteps - 1)) : 500;
+    delay(delayMs);
+  }
 
-  // Flash winner 3×
-  CRGB gold; gold.r = 0xFF; gold.g = 0xD7; gold.b = 0x00;
+  // --- Winner landed — flash gold 3× ---
+  static const CRGB gold = CRGB(0xFF, 0xD7, 0x00);
   for (int i = 0; i < 3; i++) {
     setHexColor(players[gameState.speakerIndex].homeHex, CRGB::Black);
     pushLEDs(); delay(200);
