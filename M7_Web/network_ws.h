@@ -7,18 +7,25 @@
 #include "settings_page.h"
 
 // =============================================================================
-// TI4 Hex Riser - M7 Network (SSE + HTTP commands)
+// TI4 Hex Riser - M7 Network (WebSocket + HTTP commands)
 // =============================================================================
 // Single HTTP server on port 80 handles all traffic.
-// WebSocket on port 81 removed — Nina WiFi can't run two listeners.
+// WebSocket upgrade on GET /ws — binary push from M7 to browser.
 //
-//   GET /           → main page (chunked, 1KB blocks)
-//   GET /events     → Server-Sent Events stream (M7→browser, long-lived)
-//   GET /cmd?msg=X  → command endpoint (browser→M7→CmdQueue→M4)
-//   GET /settings   → settings page
-//   GET /getsettings  → settings JSON
-//   GET /savesettings?... → save settings
-//   GET /reboot     → reboot
+//   GET /               → main page (chunked, 1KB blocks)
+//   GET /ws             → WebSocket upgrade (M7→browser binary push)
+//   GET /cmd?msg=X      → command endpoint (browser→M7→CmdQueue→M4)
+//   GET /settings       → settings page
+//   GET /getsettings    → settings JSON
+//   GET /savesettings?  → save settings
+//   GET /reboot         → reboot
+//
+// WebSocket binary frame payloads (server→browser, no masking required):
+//   Type 0x00  Keepalive     1 byte  [type]
+//   Type 0x01  ALLHEX      184 bytes [type, R0,G0,B0, ..., R60,G60,B60]
+//   Type 0x02  BRIGHTNESS    2 bytes [type, value]
+//   Type 0x03  GAMESTATE    63 bytes [type, phase, speaker, numPlayers,
+//                                     pick, action, flags, players×8×7]
 //
 // initNetwork()   — call once in setup()
 // handleNetwork() — call every loop()
@@ -26,11 +33,85 @@
 
 static WiFiServer httpServer(HTTP_PORT);
 static WiFiClient pendingClient;
-static WiFiClient sseClient;
-static bool       sseReady     = false;  // set when client connects, don't rely on connected()
+static WiFiClient wsClient;
+static bool       wsReady     = false;
 static bool       networkReady = false;
 static uint32_t   lastLedFrame = 0;
 static uint32_t   lastGameVer  = 0;
+
+// =============================================================================
+// SHA1 — specialized for exactly 60-byte input (24-char WS key + 36-char GUID)
+// Pads to two 64-byte blocks: [data|0x80|zeros] and [zeros|bitlen@56]
+// =============================================================================
+static void ws_sha1_60(const uint8_t* in, uint8_t out[20]) {
+  uint32_t h0=0x67452301,h1=0xEFCDAB89,h2=0x98BADCFE,h3=0x10325476,h4=0xC3D2E1F0;
+  uint32_t W[80];
+  uint8_t  block[64];
+
+  // --- Block 1: data[0..59] + 0x80 + zeros[61..63] ---
+  memcpy(block, in, 60);
+  block[60]=0x80; block[61]=block[62]=block[63]=0;
+  for (int i=0;i<16;i++)
+    W[i]=((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
+         ((uint32_t)block[i*4+2]<<8)|block[i*4+3];
+  for (int i=16;i<80;i++){uint32_t t=W[i-3]^W[i-8]^W[i-14]^W[i-16];W[i]=(t<<1)|(t>>31);}
+  {
+    uint32_t a=h0,b=h1,c=h2,d=h3,e=h4;
+    for (int i=0;i<80;i++){
+      uint32_t f,k;
+      if     (i<20){f=(b&c)|(~b&d);       k=0x5A827999;}
+      else if(i<40){f=b^c^d;              k=0x6ED9EBA1;}
+      else if(i<60){f=(b&c)|(b&d)|(c&d); k=0x8F1BBCDC;}
+      else         {f=b^c^d;              k=0xCA62C1D6;}
+      uint32_t t=((a<<5)|(a>>27))+f+e+k+W[i];
+      e=d; d=c; c=(b<<30)|(b>>2); b=a; a=t;
+    }
+    h0+=a;h1+=b;h2+=c;h3+=d;h4+=e;
+  }
+
+  // --- Block 2: zeros + bit-length (480 = 0x1E0) at bytes [56..63] ---
+  memset(block, 0, 64);
+  block[62]=0x01; block[63]=0xE0;  // 60 bytes * 8 bits = 480 = 0x000001E0
+  for (int i=0;i<16;i++)
+    W[i]=((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
+         ((uint32_t)block[i*4+2]<<8)|block[i*4+3];
+  for (int i=16;i<80;i++){uint32_t t=W[i-3]^W[i-8]^W[i-14]^W[i-16];W[i]=(t<<1)|(t>>31);}
+  {
+    uint32_t a=h0,b=h1,c=h2,d=h3,e=h4;
+    for (int i=0;i<80;i++){
+      uint32_t f,k;
+      if     (i<20){f=(b&c)|(~b&d);       k=0x5A827999;}
+      else if(i<40){f=b^c^d;              k=0x6ED9EBA1;}
+      else if(i<60){f=(b&c)|(b&d)|(c&d); k=0x8F1BBCDC;}
+      else         {f=b^c^d;              k=0xCA62C1D6;}
+      uint32_t t=((a<<5)|(a>>27))+f+e+k+W[i];
+      e=d; d=c; c=(b<<30)|(b>>2); b=a; a=t;
+    }
+    h0+=a;h1+=b;h2+=c;h3+=d;h4+=e;
+  }
+
+  uint32_t H[5]={h0,h1,h2,h3,h4};
+  for (int i=0;i<5;i++){
+    out[i*4]  =(H[i]>>24); out[i*4+1]=(H[i]>>16);
+    out[i*4+2]=(H[i]>>8);  out[i*4+3]= H[i];
+  }
+}
+
+// Base64 encoder — out must hold ceil(inLen/3)*4+1 bytes
+static void ws_b64enc(const uint8_t* in, int inLen, char* out) {
+  static const char B64[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  int j=0;
+  for (int i=0;i<inLen;i+=3){
+    uint32_t b=(uint32_t)in[i]<<16;
+    if(i+1<inLen) b|=(uint32_t)in[i+1]<<8;
+    if(i+2<inLen) b|=in[i+2];
+    out[j++]=B64[(b>>18)&0x3F];
+    out[j++]=B64[(b>>12)&0x3F];
+    out[j++]=(i+1<inLen)?B64[(b>>6)&0x3F]:'=';
+    out[j++]=(i+2<inLen)?B64[b&0x3F]     :'=';
+  }
+  out[j]=0;
+}
 
 // -----------------------------------------------------------------------------
 // Enqueue a command for M4 via SPSC ring buffer
@@ -133,99 +214,129 @@ void parseCommand(const char* msg) {
 }
 
 // -----------------------------------------------------------------------------
-// SSE helpers — write events to the long-lived SSE client
+// WebSocket frame write helpers
+// Tolerates one transient failure (Nina TCP buffer momentarily full) before
+// treating the connection as dead and closing it.
 // -----------------------------------------------------------------------------
-// Write to SSE client; tolerates one transient failure (TCP buffer momentarily
-// full) before treating it as a dead connection and closing.
-static uint8_t _sseFailCount = 0;
-static bool sseWrite(const char* buf, int len) {
-  if (sseClient.write((const uint8_t*)buf, len) == 0) {
-    if (++_sseFailCount >= 2) {
-      _sseFailCount = 0;
-      sseReady = false;
-      sseClient.stop();
-      if (rtCfg.debugSerial) Serial.println(F("[M7] SSE: closing (write failed)"));
+static uint8_t _wsFailCount = 0;
+static bool wsWrite(const uint8_t* data, int len) {
+  if (wsClient.write(data, len) == 0) {
+    if (++_wsFailCount >= 2) {
+      _wsFailCount = 0;
+      wsReady = false;
+      wsClient.stop();
+      if (rtCfg.debugSerial) Serial.println(F("[M7] WS: closing (write failed)"));
       return false;
     }
-    return true;  // first failure may be transient buffer-full — skip this frame
+    return true;  // first failure may be transient — skip this frame
   }
-  _sseFailCount = 0;
+  _wsFailCount = 0;
   return true;
 }
 
-static void sseSendAllHex() {
-  // Single buffer → single SPI write. "data: ALLHEX:" + 61*6 hex chars + "\n\n" = 388 bytes.
-  char buf[400];
-  int pos = snprintf(buf, sizeof(buf), "data: ALLHEX:");
-  for (int i = 0; i < SS_NUM_HEXES && pos < (int)sizeof(buf) - 7; i++) {
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X%02X%02X",
-      (uint8_t)sharedState.leds.r[i],
-      (uint8_t)sharedState.leds.g[i],
-      (uint8_t)sharedState.leds.b[i]);
+// Type 0x00: keepalive — 3-byte frame [0x82, 0x01, 0x00]
+static void wsSendKeepalive() {
+  uint8_t buf[3] = {0x82, 0x01, 0x00};
+  wsWrite(buf, 3);
+}
+
+// Type 0x01: ALLHEX — 188-byte frame (4-byte WS header + 184-byte payload)
+// Header: FIN|bin(0x82), ext16(0x7E), len=184(0x00,0xB8)
+static void wsSendAllHex() {
+  uint8_t buf[188];
+  buf[0]=0x82; buf[1]=0x7E; buf[2]=0x00; buf[3]=0xB8;
+  buf[4]=0x01;  // payload type ALLHEX
+  for (int i = 0; i < SS_NUM_HEXES; i++) {
+    buf[5 + i*3]   = sharedState.leds.r[i];
+    buf[5 + i*3+1] = sharedState.leds.g[i];
+    buf[5 + i*3+2] = sharedState.leds.b[i];
   }
-  buf[pos++] = '\n'; buf[pos++] = '\n'; buf[pos] = 0;
-  sseWrite(buf, pos);
+  wsWrite(buf, 188);
 }
 
-static void sseSendBrightness() {
-  char buf[32];
-  int len = snprintf(buf, sizeof(buf), "data: BRIGHTNESS:%d\n\n", sharedState.leds.brightness);
-  sseWrite(buf, len);
+// Type 0x02: BRIGHTNESS — 4-byte frame [0x82, 0x02, 0x02, value]
+static void wsSendBrightness() {
+  uint8_t buf[4] = {0x82, 0x02, 0x02, sharedState.leds.brightness};
+  wsWrite(buf, 4);
 }
 
-static void sseSendGameState() {
-  // Build entire game state burst into one buffer, then send in one write.
-  char buf[1024];
-  int pos = snprintf(buf, sizeof(buf),
-    "data: GAMESTATE:{\"phase\":%d,\"speaker\":%d,\"players\":%d,\"pick\":%d,\"action\":%d,\"battle\":%s}\n\n",
-    sharedState.game.currentPhase,
-    sharedState.game.speakerIndex,
-    sharedState.game.numActivePlayers,
-    sharedState.game.currentPickIndex,
-    sharedState.game.currentActionIndex,
-    sharedState.game.inBattle ? "true" : "false");
-
-  for (uint8_t i = 0; i < SS_MAX_PLAYERS && pos < (int)sizeof(buf) - 160; i++) {
-    if (!sharedState.game.players[i].active) continue;
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "data: PLAYER:%d:{\"color\":%lu,\"locked\":%s,\"card\":%d,\"home\":%d,\"passed\":%s}\n\n",
-      i,
-      (unsigned long)sharedState.game.players[i].colorHex,
-      sharedState.game.players[i].colorLocked ? "true" : "false",
-      sharedState.game.players[i].strategyCard,
-      sharedState.game.players[i].homeHex,
-      sharedState.game.players[i].hasPassed ? "true" : "false");
+// Type 0x03: GAMESTATE — 65-byte frame (2-byte WS header + 63-byte payload)
+// Payload layout: type(1) + phase,speaker,numPlayers,pick,action,flags(6) + players×8×7
+static void wsSendGameState() {
+  uint8_t buf[65];
+  buf[0]=0x82; buf[1]=63;  // FIN|bin, len=63
+  buf[2]=0x03;  // payload type GAMESTATE
+  buf[3]=sharedState.game.currentPhase;
+  buf[4]=sharedState.game.speakerIndex;
+  buf[5]=sharedState.game.numActivePlayers;
+  buf[6]=sharedState.game.currentPickIndex;
+  buf[7]=sharedState.game.currentActionIndex;
+  buf[8]=sharedState.game.inBattle ? 0x01 : 0x00;
+  for (int i = 0; i < SS_MAX_PLAYERS; i++) {
+    int b = 9 + i*7;
+    buf[b  ] = (sharedState.game.players[i].colorHex >> 16) & 0xFF;
+    buf[b+1] = (sharedState.game.players[i].colorHex >>  8) & 0xFF;
+    buf[b+2] =  sharedState.game.players[i].colorHex        & 0xFF;
+    buf[b+3] =  sharedState.game.players[i].strategyCard;
+    buf[b+4] =  sharedState.game.players[i].homeHex;
+    buf[b+5] =  sharedState.game.players[i].initiative;
+    buf[b+6] = (sharedState.game.players[i].active       ? 0x01 : 0)
+             | (sharedState.game.players[i].colorLocked  ? 0x02 : 0)
+             | (sharedState.game.players[i].hasPassed    ? 0x04 : 0)
+             | (sharedState.game.players[i].readyForNext ? 0x08 : 0);
   }
-  sseWrite(buf, pos);
+  wsWrite(buf, 65);
 }
 
-static void pushFullStateToSSE() {
+static void pushFullStateToWS() {
   uint32_t cacheSize = ((sizeof(SharedState) + 31) / 32) * 32;
   SCB_InvalidateDCache_by_Addr((uint32_t*)SHARED_STATE_BASE, cacheSize);
-  sseSendAllHex();    if (!sseReady) return;
-  sseSendBrightness(); if (!sseReady) return;
-  sseSendGameState();
+  wsSendAllHex();     if (!wsReady) return;
+  wsSendBrightness(); if (!wsReady) return;
+  wsSendGameState();
+}
+
+// -----------------------------------------------------------------------------
+// WebSocket handshake — completes the HTTP→WS upgrade
+// Computes SHA1(key + GUID) and sends the 101 response.
+// -----------------------------------------------------------------------------
+static bool doWSHandshake(WiFiClient& client, const char* key) {
+  if (strlen(key) != 24) return false;
+  const char* GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  uint8_t input[60];
+  memcpy(input,    key,  24);
+  memcpy(input+24, GUID, 36);
+  uint8_t digest[20];
+  ws_sha1_60(input, digest);
+  char accept[32];
+  ws_b64enc(digest, 20, accept);  // always 28 chars for 20-byte input
+  client.print(F("HTTP/1.1 101 Switching Protocols\r\n"));
+  client.print(F("Upgrade: websocket\r\n"));
+  client.print(F("Connection: Upgrade\r\n"));
+  client.print(F("Sec-WebSocket-Accept: "));
+  client.print(accept);
+  client.print(F("\r\n\r\n"));
+  return true;
 }
 
 // -----------------------------------------------------------------------------
 // Broadcast new frames at BROADCAST_MS rate — call every loop()
 // -----------------------------------------------------------------------------
 void broadcastNewState() {
-  static uint32_t lastBroadcast  = 0;
-  static uint32_t lastKeepalive  = 0;
+  static uint32_t lastBroadcast = 0;
+  static uint32_t lastKeepalive = 0;
   uint32_t now = millis();
   if (now - lastBroadcast < rtCfg.broadcastMs) return;
   lastBroadcast = now;
 
-  // Nina WiFi connected() always returns false for write-only SSE streams.
-  // Trust sseReady; it is cleared by sseWrite() when a write actually fails.
-  if (!sseReady) return;
+  if (!wsReady) return;
 
-  // SSE keepalive comment every 3s — prevents Nina's TCP idle timeout from
-  // closing the connection when no LED frames or game state changes arrive.
+  // WS keepalive every 3s — prevents Nina TCP idle timeout and tickles the
+  // browser's 6s heartbeat watchdog so it detects board disconnect quickly.
   if (now - lastKeepalive > 3000) {
     lastKeepalive = now;
-    if (!sseWrite(": ka\n\n", 6)) return;  // write fail = client gone
+    wsSendKeepalive();
+    if (!wsReady) return;
   }
 
   uint32_t cacheSize = ((sizeof(SharedState) + 31) / 32) * 32;
@@ -234,14 +345,14 @@ void broadcastNewState() {
   uint32_t fc = sharedState.leds.frameCount;
   if (fc != lastLedFrame) {
     lastLedFrame = fc;
-    sseSendAllHex();
-    if (!sseReady) return;
+    wsSendAllHex();
+    if (!wsReady) return;
   }
 
   uint32_t sv = sharedState.game.stateVersion;
   if (sv != lastGameVer) {
     lastGameVer = sv;
-    sseSendGameState();
+    wsSendGameState();
   }
 }
 
@@ -270,7 +381,7 @@ void serveGetSettings();
 void parseSaveSettings(const String& query);
 
 // -----------------------------------------------------------------------------
-// HTTP server — handles all endpoints including SSE and commands
+// HTTP server — handles all endpoints including WebSocket upgrade and commands
 // -----------------------------------------------------------------------------
 void handleHTTPClient() {
   WiFiClient newClient = httpServer.available();
@@ -282,30 +393,52 @@ void handleHTTPClient() {
 
   newClient.setTimeout(50);
   String req = newClient.readStringUntil('\n'); req.trim();
-  if (req.length() == 0) { newClient.stop(); return; }  // nothing arrived, discard
+  if (req.length() == 0) { newClient.stop(); return; }
+
+  // --- WebSocket upgrade: parse headers before draining ---
+  if (req.startsWith("GET /ws")) {
+    char wsKey[32] = {};
+    bool isUpgrade = false;
+    while (newClient.available()) {
+      String line = newClient.readStringUntil('\n');
+      line.trim();
+      if (line.length() == 0 || line == "\r") break;
+      // Case-insensitive header matching
+      String lower = line; lower.toLowerCase();
+      if (lower.startsWith("upgrade:") && lower.indexOf("websocket") >= 0)
+        isUpgrade = true;
+      if (lower.startsWith("sec-websocket-key:")) {
+        // Key value is case-sensitive base64 — use original line
+        String k = line.substring(18); k.trim();
+        k.toCharArray(wsKey, sizeof(wsKey));
+      }
+    }
+    if (!isUpgrade || wsKey[0] == 0) {
+      newClient.println(F("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n"));
+      newClient.stop();
+      return;
+    }
+    wsClient.stop();  // close any existing WS socket
+    if (doWSHandshake(newClient, wsKey)) {
+      wsClient = newClient;
+      wsReady  = true;
+      _wsFailCount = 0;
+      if (rtCfg.debugSerial) Serial.println(F("[M7] WS: client connected"));
+    } else {
+      if (rtCfg.debugSerial) Serial.println(F("[M7] WS: handshake failed (bad key length?)"));
+      newClient.stop();
+    }
+    return;  // keep connection alive for pushes
+  }
+
+  // Drain remaining headers for all other routes
   while (newClient.available()) {
     String line = newClient.readStringUntil('\n'); line.trim();
     if (line.length() == 0 || line == "\r") break;
   }
 
-  // --- SSE stream: keep connection alive, push events every BROADCAST_MS ---
-  if (req.startsWith("GET /events")) {
-    sseClient.stop();  // always close any existing SSE socket (connected() unreliable on Nina)
-    newClient.println(F("HTTP/1.1 200 OK"));
-    newClient.println(F("Content-Type: text/event-stream"));
-    newClient.println(F("Cache-Control: no-cache"));
-    newClient.println(F("Connection: keep-alive"));
-    newClient.println(F("retry: 500"));  // browser reconnects in 500ms if stream drops
-    newClient.println();   // blank line ends headers
-    sseClient = newClient;
-    sseReady  = true;
-    // Do NOT push state immediately — let broadcastNewState() handle it within broadcastMs.
-    // Pushing right after headers fills Nina's ~512B per-socket buffer → first broadcast fails.
-    if (rtCfg.debugSerial) Serial.println(F("[M7] SSE: client connected"));
-    return;                // do NOT stop — stays alive for events
-
   // --- Command endpoint: browser sends commands to M4 ---
-  } else if (req.startsWith("GET /cmd?msg=")) {
+  if (req.startsWith("GET /cmd?msg=")) {
     int sp = req.indexOf(' ', 13);
     String enc = (sp < 0) ? req.substring(13) : req.substring(13, sp);
     char msg[128];

@@ -445,11 +445,11 @@ function fx(name) {
 }
 
 // ============================================================
-// SSE (server → browser state push via /events)
+// WebSocket (server → browser binary push via /ws)
 // Commands sent browser → server via fetch('/cmd?msg=...')
-// EventSource auto-reconnects on drop — no manual retry needed.
+// WebSocket auto-reconnects on close; watchdog detects unresponsive boards.
 // ============================================================
-console.log('[M7] script reached SSE section');
+console.log('[M7] script reached WS section');
 var _online = false;
 
 function setOnline(on) {
@@ -463,74 +463,78 @@ function send(msg) {
   fetch('/cmd?msg=' + encodeURIComponent(msg)).catch(function () {});
 }
 
-function handleMessage(data) {
-  if (data.startsWith('ALLHEX:')) {
-    var hex = data.slice(7);
-    for (var i = 0; i < 61 && (i + 1) * 6 <= hex.length; i++) {
-      var o = i * 6;
-      setHexAllSides(i,
-        parseInt(hex.slice(o,     o + 2), 16),
-        parseInt(hex.slice(o + 2, o + 4), 16),
-        parseInt(hex.slice(o + 4, o + 6), 16));
-    }
+function handleBinary(buf) {
+  var view = new DataView(buf);
+  if (view.byteLength < 1) return;
+  var type = view.getUint8(0);
 
-  } else if (data.startsWith('HEX:')) {
-    var parts = data.split(':');
-    if (parts.length >= 3) {
-      var rgb = parts[2];
-      setHexAllSides(parseInt(parts[1]),
-        parseInt(rgb.slice(0, 2), 16),
-        parseInt(rgb.slice(2, 4), 16),
-        parseInt(rgb.slice(4, 6), 16));
-    }
+  if (type === 0x00) return;  // keepalive — _lastMsgMs already updated by onmessage
 
-  } else if (data.startsWith('BRIGHTNESS:')) {
-    var b = parseInt(data.slice(11));
+  if (type === 0x01 && view.byteLength >= 184) {
+    // ALLHEX: type(1) + 61 × RGB(3) = 184 bytes
+    for (var i = 0; i < 61; i++) {
+      var o = 1 + i * 3;
+      setHexAllSides(i, view.getUint8(o), view.getUint8(o+1), view.getUint8(o+2));
+    }
+    return;
+  }
+
+  if (type === 0x02 && view.byteLength >= 2) {
+    // BRIGHTNESS: type(1) + value(1)
+    var b = view.getUint8(1);
     var sl = document.getElementById('brightness');
     if (sl) { sl.value = b; document.getElementById('bright-val').textContent = b; }
-
-  } else if (data.startsWith('GAMESTATE:')) {
-    try { var gs = JSON.parse(data.slice(10)); } catch(e) {}
-
+    return;
   }
-  // PLAYER: reserved for future game UI
+
+  // type 0x03 GAMESTATE: reserved for future game UI
 }
 
-var _evtSrc = null;
+var _ws = null;
 var _lastMsgMs = 0;
 
-function connectSSE() {
-  console.log('[SSE] connecting to /events...');
-  if (_evtSrc) _evtSrc.close();
-  _evtSrc = new EventSource('/events');
-  _evtSrc.onopen = function () {
-    console.log('[SSE] connected');
+function connectWS() {
+  console.log('[WS] connecting...');
+  if (_ws) { _ws.onclose = null; _ws.close(); }
+  var proto = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
+  _ws = new WebSocket(proto + window.location.host + '/ws');
+  _ws.binaryType = 'arraybuffer';
+  _ws.onopen = function () {
+    console.log('[WS] connected');
     _lastMsgMs = Date.now();
     setOnline(true);
   };
-  _evtSrc.onerror = function (e) {
-    console.warn('[SSE] error/closed, readyState=' + _evtSrc.readyState, e);
+  _ws.onclose = function () {
+    console.warn('[WS] closed — reconnecting in 500ms...');
+    setOnline(false);
+    setTimeout(connectWS, 500);
+  };
+  _ws.onerror = function (e) {
+    console.warn('[WS] error', e);
     setOnline(false);
   };
-  _evtSrc.onmessage = function (evt) {
+  _ws.onmessage = function (evt) {
     _lastMsgMs = Date.now();
-    handleMessage(evt.data);
+    if (evt.data instanceof ArrayBuffer) handleBinary(evt.data);
   };
 }
 
-// Heartbeat watchdog: server sends SSE keepalive every 3s.
-// If nothing arrives for 6s the board is offline (unplugged / lost).
+// Heartbeat watchdog: server sends keepalive every 3s.
+// If nothing arrives for 6s, force reconnect and show offline.
+// This fires even when the TCP connection is still half-open (board unplugged).
 setInterval(function () {
   if (!_online) return;
   if (_lastMsgMs > 0 && Date.now() - _lastMsgMs > 6000) {
-    console.warn('[SSE] heartbeat timeout — board offline');
+    console.warn('[WS] heartbeat timeout — board offline, reconnecting...');
     setOnline(false);
+    setTimeout(connectWS, 500);
   }
 }, 1000);
 
-// Delay SSE connect so page + /getsettings finish before /events opens.
-// Nina's TCP backlog is 1 — simultaneous connections drop silently.
-setTimeout(connectSSE, 800);
+// Delay WS connect so page + /getsettings finish before /ws opens.
+// Nina TCP backlog=1 — simultaneous connections drop silently.
+// 1500ms gives the page load and /getsettings plenty of time to complete.
+setTimeout(connectWS, 1500);
 </script>
 </body>
 </html>

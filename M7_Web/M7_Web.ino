@@ -40,25 +40,26 @@ void setup() {
 // loop()
 // =============================================================================
 void loop() {
-  // Bridge M4 RPC debug output to USB Serial
+  // Bridge M4 RPC debug output to USB Serial.
+  // Always drain the RPC buffer so M4's RPC.print() calls never block.
+  // Discard bytes if the USB CDC TX buffer is full rather than blocking here —
+  // a blocked Serial.write() here would stall loop(), which in turn fills the
+  // RPC buffer and blocks M4, freezing animations.
   while (RPC.available()) {
-    Serial.write(RPC.read());
+    uint8_t b = (uint8_t)RPC.read();
+    if (Serial.availableForWrite() > 0) Serial.write(b);
   }
 
-  handleNetwork();   // HTTP (SSE + /cmd) + broadcastNewState()
+  handleNetwork();   // WebSocket push + HTTP /cmd
 
   static uint32_t lastHeartbeat = 0;
   if (millis() - lastHeartbeat > 5000) {
     lastHeartbeat = millis();
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-    if (rtCfg.debugSerial) {
-      // Must invalidate D-cache — M4 writes sharedState from the other core
-      uint32_t cacheSize = ((sizeof(SharedState) + 31) / 32) * 32;
-      SCB_InvalidateDCache_by_Addr((uint32_t*)SHARED_STATE_BASE, cacheSize);
-      Serial.print(F("[M7] alive — frameCount="));
-      Serial.print(sharedState.leds.frameCount);
-      Serial.print(F("  stateVer="));
-      Serial.println(sharedState.game.stateVersion);
+    // Guard: only print if the TX buffer has room — a blocking print here
+    // would stall loop() and cascade into M4 blocking on RPC.print().
+    if (rtCfg.debugSerial && Serial.availableForWrite() > 20) {
+      Serial.println(F("[M7] alive"));
     }
   }
 }
