@@ -14,8 +14,8 @@ void handleNetwork();
 
 // -----------------------------------------------------------------------------
 // animDelay() — replaces delay() inside animation code.
-// Keeps handleNetwork() running so the board stays responsive during long
-// blocking animations (roulette, boot snake, etc.).
+// handleNetwork() is a no-op with AsyncWebServer (handled in background),
+// but kept here so the call site is consistent and easy to extend.
 // -----------------------------------------------------------------------------
 static void animDelay(uint32_t ms) {
   uint32_t start = millis();

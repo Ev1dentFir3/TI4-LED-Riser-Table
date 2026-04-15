@@ -119,6 +119,41 @@ static uint8_t hexDistance(uint8_t from, uint8_t to) {
   return dist[to];
 }
 
+// Returns true if hex h is on the board edge (has at least one missing neighbor).
+static bool isEdgeHex(uint8_t h) {
+  for (int dir = 0; dir < 6; dir++) {
+    if (HEX_NEIGHBORS[h][dir] < 0) return true;
+  }
+  return false;
+}
+
+// Returns the edge hex whose Euclidean position is closest to homeHex.
+static uint8_t findClosestEdgeHex(uint8_t homeHex) {
+  float hx, hy;
+  getHexPosition(homeHex, hx, hy);
+  float   bestDist = 1e9f;
+  uint8_t bestHex  = homeHex;
+  for (uint8_t h = 0; h < NUM_HEXES; h++) {
+    if (!isEdgeHex(h)) continue;
+    float ex, ey;
+    getHexPosition(h, ex, ey);
+    float dx = ex - hx, dy = ey - hy;
+    float d  = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; bestHex = h; }
+  }
+  return bestHex;
+}
+
+// Fills out[] with up to 2 edge hex neighbors of edgeHex; returns count.
+static uint8_t getAdjacentEdgeHexes(uint8_t edgeHex, uint8_t out[2]) {
+  uint8_t count = 0;
+  for (int dir = 0; dir < 6 && count < 2; dir++) {
+    int nb = HEX_NEIGHBORS[edgeHex][dir];
+    if (nb >= 0 && isEdgeHex((uint8_t)nb)) out[count++] = (uint8_t)nb;
+  }
+  return count;
+}
+
 // =============================================================================
 // SECTION 3: Helper Utilities
 // =============================================================================
@@ -478,6 +513,15 @@ static void handleStrategyLockIn(uint8_t playerIndex) {
   players[playerIndex].strategyLocked = true;
   players[playerIndex].initiative     = players[playerIndex].strategyCard;
 
+  // Imperial (card 7) passes the speaker token
+  if (players[playerIndex].strategyCard == 7) {
+    gameState.speakerIndex = playerIndex;
+    if (rtCfg.debugSerial) {
+      Serial.print(F("Game: P")); Serial.print(playerIndex + 1);
+      Serial.println(F(" picks Imperial — becomes Speaker"));
+    }
+  }
+
   uint8_t cardIdx = players[playerIndex].strategyCard - 1;
   CRGB stratColor;
   stratColor.r = (STRATEGY_COLORS[cardIdx] >> 16) & 0xFF;
@@ -503,6 +547,12 @@ static bool checkStrategyComplete() {
 // SECTION 6: PHASE_ACTION — Main Turn Sequence
 // =============================================================================
 
+// Two-step battle initiation state (Key 13 → Key 1-8).
+// battlePending: a player pressed Key 13 and is waiting to select an opponent.
+// battleChallenger: the playerIndex who initiated the challenge.
+static bool    battlePending    = false;
+static uint8_t battleChallenger = 0xFF;
+
 // Sorts active, non-passed players by initiative (strategy card) ascending.
 static void buildActionOrder() {
   uint8_t sortedPlayers[MAX_PLAYERS];
@@ -527,42 +577,61 @@ static void buildActionOrder() {
 }
 
 // Called every loop() during PHASE_ACTION.
-// Active player: edge pulse (white → red after 5 min) spreading to neighbors.
-// Passed players: home hex at 50% brightness.
-// Others:         home hex at full player color.
-static void updateActivePlayerPulse() {
+// - All non-home hexes: black if unclaimed, player color if claimed (hexOwner[]).
+// - Home hexes: static player color (dimmed 50% if passed).
+// - Current active player: 3 board-edge hexes breathe white (or red if overtime).
+static void updateActionPhaseDisplay() {
   if (gameState.actionOrderSize == 0) return;
 
-  uint8_t activePlayerIdx = gameState.actionOrder[gameState.currentActionIndex];
-  uint32_t elapsed        = millis() - players[activePlayerIdx].turnStartMs;
-  bool     overTimeWarning = (elapsed >= TURN_WARNING_MS);
+  uint8_t  activeIdx = gameState.actionOrder[gameState.currentActionIndex];
+  uint32_t elapsed   = millis() - players[activeIdx].turnStartMs;
+  bool     overTime  = (elapsed >= TURN_WARNING_MS);
 
-  uint8_t pulseBrightness = beatsin8(60, 128, 255);
-  CRGB pulseColor = overTimeWarning ? CRGB::Red : CRGB::White;
-  pulseColor.nscale8(pulseBrightness);
+  uint8_t breathVal  = beatsin8(30, 60, 255);
+  CRGB breathColor   = overTime ? CRGB::Red : CRGB::White;
+  breathColor.nscale8(breathVal);
 
-  // Draw all player home hexes first
+  // Step 1: non-home hexes — claimed → owner color, unclaimed → black
+  for (uint8_t h = 0; h < NUM_HEXES; h++) {
+    bool isHome = false;
+    for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+      if (players[i].active && players[i].homeHex == h) { isHome = true; break; }
+    }
+    if (isHome) continue;
+
+    if (hexOwner[h] >= 0 && hexOwner[h] < MAX_PLAYERS) {
+      CRGB c;
+      c.r = (players[hexOwner[h]].colorHex >> 16) & 0xFF;
+      c.g = (players[hexOwner[h]].colorHex >>  8) & 0xFF;
+      c.b =  players[hexOwner[h]].colorHex        & 0xFF;
+      setHexColor(h, c);
+    } else {
+      setHexColor(h, CRGB::Black);
+    }
+  }
+
+  // Step 2: home hexes — static, full or dimmed if passed
   for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
     if (!players[i].active) continue;
-    CRGB playerColor;
-    playerColor.r = (players[i].colorHex >> 16) & 0xFF;
-    playerColor.g = (players[i].colorHex >>  8) & 0xFF;
-    playerColor.b =  players[i].colorHex        & 0xFF;
-
-    if (players[i].hasPassed) {
-      playerColor.nscale8((uint8_t)((255UL * PASSED_DIM_PERCENT) / 100));
-    }
-    setHexColor(players[i].homeHex, playerColor);
+    CRGB c;
+    c.r = (players[i].colorHex >> 16) & 0xFF;
+    c.g = (players[i].colorHex >>  8) & 0xFF;
+    c.b =  players[i].colorHex        & 0xFF;
+    if (players[i].hasPassed) c.nscale8((uint8_t)((255UL * PASSED_DIM_PERCENT) / 100));
+    setHexColor(players[i].homeHex, c);
   }
 
-  // Overlay pulse on active player home hex edges and spread to neighbors
-  uint8_t homeHex = players[activePlayerIdx].homeHex;
-  for (int side = 0; side < 6; side++) {
-    setHexSideColor(homeHex, side, pulseColor);
+  // Step 3: breathing edge indicator — closest edge hex + up to 2 adjacent edge hexes
+  uint8_t edgeHex  = findClosestEdgeHex(players[activeIdx].homeHex);
+  uint8_t adj[2];
+  uint8_t adjCount = getAdjacentEdgeHexes(edgeHex, adj);
+
+  setHexColor(edgeHex, breathColor);
+  for (uint8_t j = 0; j < adjCount; j++) {
+    CRGB dim = breathColor;
+    dim.nscale8(150);
+    setHexColor(adj[j], dim);
   }
-  uint8_t visited[NUM_HEXES] = {0};
-  visited[homeHex] = 1;
-  spreadPulseToNeighbors(homeHex, pulseColor, EDGE_PULSE_SPREAD, visited);
 }
 
 // Player presses Key 14 to pass — removed from initiative order this round.
@@ -653,16 +722,34 @@ static void endBattle() {
 // SECTION 7: PHASE_STATUS — End-of-Round Cleanup
 // =============================================================================
 
-// Divides the 61 hexes into radial slices (one per active player) by angle
-// from center hex 30. Assigns each hex to the nearest slice owner.
+// Assigns each hex to the active player whose home hex is angularly closest.
+// This matches the actual seating positions around the board rather than
+// mapping by player index order, which caused cross-player slice assignment.
 static void assignSlicesToPlayers() {
   if (gameState.numActivePlayers == 0) return;
-  float sliceDegrees = 360.0f / gameState.numActivePlayers;
 
+  // Cache each active player's home-hex angle
+  float   homeAngle[MAX_PLAYERS];
+  uint8_t activeList[MAX_PLAYERS];
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+    if (!players[i].active) continue;
+    activeList[count] = i;
+    homeAngle[count]  = getAngleFromCenter(players[i].homeHex);
+    count++;
+  }
+
+  // Each hex → nearest player by circular angular distance
   for (uint8_t h = 0; h < NUM_HEXES; h++) {
-    float angle    = getAngleFromCenter(h);
-    uint8_t sliceIdx = (uint8_t)(angle / sliceDegrees) % gameState.numActivePlayers;
-    gameState.hexSliceOwner[h] = getActivePlayerByPosition(sliceIdx);
+    float   angle   = getAngleFromCenter(h);
+    float   minDist = 361.0f;
+    uint8_t owner   = activeList[0];
+    for (uint8_t p = 0; p < count; p++) {
+      float diff = fabsf(angle - homeAngle[p]);
+      if (diff > 180.0f) diff = 360.0f - diff;
+      if (diff < minDist) { minDist = diff; owner = activeList[p]; }
+    }
+    gameState.hexSliceOwner[h] = owner;
   }
 }
 
@@ -751,6 +838,7 @@ void transitionToSetup() {
   }
 
   setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
   pushLEDs();
 
   if (rtCfg.debugSerial) {
@@ -764,6 +852,7 @@ void transitionToStrategy() {
   buildStrategyPickOrder();
 
   setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
   pushLEDs();
 
   if (rtCfg.debugSerial) {
@@ -788,7 +877,11 @@ void transitionToAction() {
     players[gameState.actionOrder[0]].turnStartMs = millis();
   }
 
-  // Return home hexes to player colors
+  // All hexes go dark; ownership cleared
+  setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
+
+  // Seed home hexes in player color
   for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
     if (!players[i].active) continue;
     CRGB color;
@@ -825,6 +918,7 @@ void transitionToAgenda() {
   gameState.currentPhase = PHASE_AGENDA;
 
   setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
   pushLEDs();
 
   if (rtCfg.debugSerial) {
@@ -871,17 +965,37 @@ void handleGameKey(uint8_t playerIndex, uint8_t key) {
       break;
 
     case PHASE_ACTION:
-      if (key == 15) {
+      if (key == 13) {
+        if (gameState.inBattle) {
+          // Any player pressing Key 13 ends the battle
+          endBattle();
+          battlePending = false;
+        } else if (battlePending && battleChallenger == playerIndex) {
+          // Same player presses Key 13 again — cancel the challenge
+          battlePending = false;
+          if (rtCfg.debugSerial) Serial.println(F("Game: Battle challenge cancelled"));
+        } else {
+          // First press: enter challenge mode
+          battlePending    = true;
+          battleChallenger = playerIndex;
+          if (rtCfg.debugSerial) {
+            Serial.print(F("Game: P")); Serial.print(playerIndex + 1);
+            Serial.println(F(" challenging — press opponent number (1-8)"));
+          }
+        }
+      } else if (battlePending && playerIndex == battleChallenger && key >= 1 && key <= 8) {
+        // Second press: challenger picks opponent by player number
+        uint8_t defenderIdx = key - 1;  // key 1 → player index 0
+        if (defenderIdx != battleChallenger && players[defenderIdx].active) {
+          battlePending = false;
+          startBattle(battleChallenger, defenderIdx);
+        } else {
+          if (rtCfg.debugSerial) Serial.println(F("Game: Invalid battle target"));
+        }
+      } else if (key == 15) {
         handleEndTurn(playerIndex);
       } else if (key == 14) {
         handlePlayerPass(playerIndex);
-      } else if (key == 13) {
-        // Key 13 = battle mode toggle (select opponent via keys 1-8 next)
-        // Simplified: toggle battle off if already in battle
-        if (gameState.inBattle) {
-          endBattle();
-        }
-        // Starting battle requires two presses — handled elsewhere or via serial
       }
       break;
 
@@ -906,14 +1020,16 @@ void handleGameKey(uint8_t playerIndex, uint8_t key) {
 // =============================================================================
 
 void updateGameState() {
+  bool effectActive = (currentEffect != ANIM_NONE);
+
   switch (gameState.currentPhase) {
 
     case PHASE_SETUP:
-      updateJoinModeDisplay();
+      if (!effectActive) updateJoinModeDisplay();
       break;
 
     case PHASE_STRATEGY:
-      updateStrategyPickerPulse();
+      if (!effectActive) updateStrategyPickerPulse();
       if (checkStrategyComplete()) {
         runCenterOutPulse();
         transitionToAction();
@@ -923,20 +1039,20 @@ void updateGameState() {
     case PHASE_ACTION:
       if (checkActionComplete()) {
         transitionToStatus();
-      } else if (!gameState.inBattle) {
-        updateActivePlayerPulse();
+      } else if (!gameState.inBattle && !effectActive) {
+        updateActionPhaseDisplay();
       }
       break;
 
     case PHASE_STATUS:
-      updateStatusPulse();
+      if (!effectActive) updateStatusPulse();
       if (checkStatusComplete()) {
         transitionToAgenda();
       }
       break;
 
     case PHASE_AGENDA:
-      updateAgendaPulse();
+      if (!effectActive) updateAgendaPulse();
       break;
   }
 }
