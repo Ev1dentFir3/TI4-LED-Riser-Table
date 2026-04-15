@@ -513,6 +513,15 @@ static void handleStrategyLockIn(uint8_t playerIndex) {
   players[playerIndex].strategyLocked = true;
   players[playerIndex].initiative     = players[playerIndex].strategyCard;
 
+  // Imperial (card 7) passes the speaker token
+  if (players[playerIndex].strategyCard == 7) {
+    gameState.speakerIndex = playerIndex;
+    if (rtCfg.debugSerial) {
+      Serial.print(F("Game: P")); Serial.print(playerIndex + 1);
+      Serial.println(F(" picks Imperial — becomes Speaker"));
+    }
+  }
+
   uint8_t cardIdx = players[playerIndex].strategyCard - 1;
   CRGB stratColor;
   stratColor.r = (STRATEGY_COLORS[cardIdx] >> 16) & 0xFF;
@@ -537,6 +546,12 @@ static bool checkStrategyComplete() {
 // =============================================================================
 // SECTION 6: PHASE_ACTION — Main Turn Sequence
 // =============================================================================
+
+// Two-step battle initiation state (Key 13 → Key 1-8).
+// battlePending: a player pressed Key 13 and is waiting to select an opponent.
+// battleChallenger: the playerIndex who initiated the challenge.
+static bool    battlePending    = false;
+static uint8_t battleChallenger = 0xFF;
 
 // Sorts active, non-passed players by initiative (strategy card) ascending.
 static void buildActionOrder() {
@@ -707,16 +722,34 @@ static void endBattle() {
 // SECTION 7: PHASE_STATUS — End-of-Round Cleanup
 // =============================================================================
 
-// Divides the 61 hexes into radial slices (one per active player) by angle
-// from center hex 30. Assigns each hex to the nearest slice owner.
+// Assigns each hex to the active player whose home hex is angularly closest.
+// This matches the actual seating positions around the board rather than
+// mapping by player index order, which caused cross-player slice assignment.
 static void assignSlicesToPlayers() {
   if (gameState.numActivePlayers == 0) return;
-  float sliceDegrees = 360.0f / gameState.numActivePlayers;
 
+  // Cache each active player's home-hex angle
+  float   homeAngle[MAX_PLAYERS];
+  uint8_t activeList[MAX_PLAYERS];
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+    if (!players[i].active) continue;
+    activeList[count] = i;
+    homeAngle[count]  = getAngleFromCenter(players[i].homeHex);
+    count++;
+  }
+
+  // Each hex → nearest player by circular angular distance
   for (uint8_t h = 0; h < NUM_HEXES; h++) {
-    float angle    = getAngleFromCenter(h);
-    uint8_t sliceIdx = (uint8_t)(angle / sliceDegrees) % gameState.numActivePlayers;
-    gameState.hexSliceOwner[h] = getActivePlayerByPosition(sliceIdx);
+    float   angle   = getAngleFromCenter(h);
+    float   minDist = 361.0f;
+    uint8_t owner   = activeList[0];
+    for (uint8_t p = 0; p < count; p++) {
+      float diff = fabsf(angle - homeAngle[p]);
+      if (diff > 180.0f) diff = 360.0f - diff;
+      if (diff < minDist) { minDist = diff; owner = activeList[p]; }
+    }
+    gameState.hexSliceOwner[h] = owner;
   }
 }
 
@@ -932,17 +965,37 @@ void handleGameKey(uint8_t playerIndex, uint8_t key) {
       break;
 
     case PHASE_ACTION:
-      if (key == 15) {
+      if (key == 13) {
+        if (gameState.inBattle) {
+          // Any player pressing Key 13 ends the battle
+          endBattle();
+          battlePending = false;
+        } else if (battlePending && battleChallenger == playerIndex) {
+          // Same player presses Key 13 again — cancel the challenge
+          battlePending = false;
+          if (rtCfg.debugSerial) Serial.println(F("Game: Battle challenge cancelled"));
+        } else {
+          // First press: enter challenge mode
+          battlePending    = true;
+          battleChallenger = playerIndex;
+          if (rtCfg.debugSerial) {
+            Serial.print(F("Game: P")); Serial.print(playerIndex + 1);
+            Serial.println(F(" challenging — press opponent number (1-8)"));
+          }
+        }
+      } else if (battlePending && playerIndex == battleChallenger && key >= 1 && key <= 8) {
+        // Second press: challenger picks opponent by player number
+        uint8_t defenderIdx = key - 1;  // key 1 → player index 0
+        if (defenderIdx != battleChallenger && players[defenderIdx].active) {
+          battlePending = false;
+          startBattle(battleChallenger, defenderIdx);
+        } else {
+          if (rtCfg.debugSerial) Serial.println(F("Game: Invalid battle target"));
+        }
+      } else if (key == 15) {
         handleEndTurn(playerIndex);
       } else if (key == 14) {
         handlePlayerPass(playerIndex);
-      } else if (key == 13) {
-        // Key 13 = battle mode toggle (select opponent via keys 1-8 next)
-        // Simplified: toggle battle off if already in battle
-        if (gameState.inBattle) {
-          endBattle();
-        }
-        // Starting battle requires two presses — handled elsewhere or via serial
       }
       break;
 

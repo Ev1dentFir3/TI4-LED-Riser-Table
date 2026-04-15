@@ -303,6 +303,23 @@ void parseWSCommand(const char* msg) {
     uint32_t rgb = strtoul(msg + 4, nullptr, 16);
     setAllHexes(CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
 
+  } else if (strncmp(msg, "BATTLE:", 7) == 0) {
+    // BATTLE:attackerIdx:defenderIdx  (0-based player indices)
+    int attacker = atoi(msg + 7);
+    const char* defPtr = strchr(msg + 7, ':');
+    if (defPtr) {
+      int defender = atoi(defPtr + 1);
+      if (attacker >= 0 && attacker < MAX_PLAYERS && defender >= 0 && defender < MAX_PLAYERS
+          && attacker != defender && players[attacker].active && players[defender].active) {
+        battlePending = false;
+        startBattle((uint8_t)attacker, (uint8_t)defender);
+      }
+    }
+
+  } else if (strcmp(msg, "ENDBATTLE") == 0) {
+    endBattle();
+    battlePending = false;
+
   } else if (strncmp(msg, "CLAIMHEX:", 9) == 0) {
     // CLAIMHEX:hexIdx:playerIdx  (playerIdx 255 = unclaim)
     int hexIdx = atoi(msg + 9);

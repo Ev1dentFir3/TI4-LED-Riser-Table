@@ -182,6 +182,17 @@ button.dim:hover { color: #8899aa; }
   </div>
 
   <hr>
+  <div class="lbl">Battle</div>
+  <div class="two-col">
+    <select id="battle-atk" style="background:#0f1820;color:#99bbcc;border:1px solid #2a4a6a;border-radius:4px;font-size:0.72rem;padding:3px"></select>
+    <select id="battle-def" style="background:#0f1820;color:#99bbcc;border:1px solid #2a4a6a;border-radius:4px;font-size:0.72rem;padding:3px"></select>
+  </div>
+  <div class="two-col" style="margin-top:3px">
+    <button onclick="startBattleWeb()" style="border-color:#6a3a1a;color:#ffcc88">&#9876; Battle</button>
+    <button class="stop" onclick="send('ENDBATTLE')">End Battle</button>
+  </div>
+
+  <hr>
   <button id="btn-clear-all" class="dim" style="width:100%" onclick="onClearAllClick()">Clear All</button>
   <a href="/settings" style="display:block;margin-top:10px;text-align:center;color:#888;font-size:.8em;text-decoration:none">&#9881; Settings</a>
 
@@ -433,8 +444,34 @@ function fetchAndRenderPlayers() {
         el.appendChild(lbl);
         c.appendChild(el);
       });
+
+      // Populate battle dropdowns
+      ['battle-atk','battle-def'].forEach(function (id) {
+        var sel = document.getElementById(id);
+        if (!sel) return;
+        var prev = sel.value;
+        sel.innerHTML = '';
+        data.players.forEach(function (p) {
+          var opt = document.createElement('option');
+          opt.value = p.idx;
+          opt.textContent = 'P' + (p.idx + 1);
+          sel.appendChild(opt);
+        });
+        if (prev !== '') sel.value = prev;
+        // Default defender to second player
+        if (id === 'battle-def' && data.players.length > 1) {
+          if (!prev) sel.value = data.players[1].idx;
+        }
+      });
     })
     .catch(function () {});
+}
+
+function startBattleWeb() {
+  var atk = document.getElementById('battle-atk').value;
+  var def = document.getElementById('battle-def').value;
+  if (atk === def) return;
+  send('BATTLE:' + atk + ':' + def);
 }
 
 // ============================================================
