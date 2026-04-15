@@ -4,41 +4,45 @@
 #include "runtime_settings.h"
 #include "led_map.h"
 #include "hex_neighbors.h"
-#include "shared_state.h"
 
 // =============================================================================
-// TI4 Hex Riser - LED Control (M4)
+// TI4 Hex Riser - LED Control
+// Target: ESP32-DOWP-V3
 // =============================================================================
 // FastLED setup, per-hex color management, and all animation effects.
-// Call initLEDs() once in setup(), updateLEDs() every loop iteration.
+// Call initLEDs() once in setup(), then create the LED task on Core 0.
 //
-// Changes vs legacy:
-//   • updateLEDs() writes LED snapshot to shared SRAM every frame
-//   • updateLEDs() calls tickHexFlash() (defined in flash_state.h)
-//   • No network broadcasts — M7 reads sharedState and pushes to browser
+// Dual-core safety:
+//   ledMutex protects FastLED.show() in pushLEDs(). Game state writes to
+//   leds[]/hexColor[] on Core 1 are not mutex-guarded for simplicity; the
+//   ESP32 RMT peripheral does not disable interrupts, so the worst case is
+//   one frame of visual tearing, which is acceptable.
 // =============================================================================
 
 CRGB leds[NUM_LEDS];
-
-// Per-hex target colors (what each hex should display)
 CRGB hexColor[NUM_HEXES];
-
-// Per-hex owner (-1 = unowned, 0–7 = player index)
 int8_t hexOwner[NUM_HEXES];
 
-// Animation state
+// Mutex protecting FastLED.show() — taken by pushLEDs() on Core 0.
+SemaphoreHandle_t ledMutex = nullptr;
+
 enum AnimEffect {
   ANIM_NONE    = 0,
-  ANIM_RAINBOW = 1,  // rotating rainbow across all hexes
-  ANIM_PULSE   = 2,  // gentle brightness pulse on all hexes
-  ANIM_SPIRAL  = 3,  // spiral out from hex 30 (center)
-  ANIM_SPARKLE = 4,  // random sparkle across the grid
-  ANIM_WAVE    = 5,  // color wave sweeping left to right
+  ANIM_RAINBOW = 1,
+  ANIM_PULSE   = 2,
+  ANIM_SPIRAL  = 3,
+  ANIM_SPARKLE = 4,
+  ANIM_WAVE    = 5,
 };
 
-static AnimEffect currentEffect = ANIM_NONE;
-static uint32_t   animStartMs   = 0;
-static uint32_t   lastLEDUpdate = 0;
+static AnimEffect currentEffect      = ANIM_NONE;
+static uint32_t   animStartMs        = 0;
+static uint32_t   lastLEDUpdate      = 0;
+
+// Snapshot saved when an effect starts; restored when stopped.
+// Lets effects temporarily hijack the LEDs without touching game state.
+static CRGB hexColorSnapshot[NUM_HEXES];
+static bool effectSnapshotValid = false;
 
 // Forward declarations
 void setHexColor(int hex, CRGB color);
@@ -46,16 +50,17 @@ void setHexSideColor(int hex, int side, CRGB color);
 void applyHexColors();
 void pushLEDs();
 void runLEDTest();
-void tickHexFlash();   // defined in flash_state.h, called from updateLEDs()
 
 // -----------------------------------------------------------------------------
 // Init
 // -----------------------------------------------------------------------------
 void initLEDs() {
+  ledMutex = xSemaphoreCreateMutex();
+
   FastLED.addLeds<SK6812, LED_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setBrightness(rtCfg.defaultBrightness);
   FastLED.clear();
-  if (!rtCfg.simulateHardware) FastLED.show();
+  FastLED.show();
 
   for (int i = 0; i < NUM_HEXES; i++) {
     hexColor[i] = CRGB::Black;
@@ -63,7 +68,9 @@ void initLEDs() {
   }
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] LEDs: FastLED init OK — 915 LEDs on GPIO 6");
+    Serial.println(F("LEDs: FastLED init OK — 915 LEDs on GPIO 13 (RMT)"));
+    Serial.print(F("LEDs: Brightness "));
+    Serial.println(rtCfg.defaultBrightness);
   }
 
   if (rtCfg.debugLed) {
@@ -77,7 +84,6 @@ void initLEDs() {
 void setHexColor(int hex, CRGB color) {
   if (hex < 0 || hex >= NUM_HEXES) return;
   hexColor[hex] = color;
-
   for (int side = 0; side < 6; side++) {
     for (int slot = 0; slot < 3; slot++) {
       int idx = HEX_MAP[hex][side][slot];
@@ -88,7 +94,6 @@ void setHexColor(int hex, CRGB color) {
   }
 }
 
-// Set only the LEDs on one side of a hex (does not update hexColor[])
 void setHexSideColor(int hex, int side, CRGB color) {
   if (hex < 0 || hex >= NUM_HEXES) return;
   if (side < 0 || side > 5) return;
@@ -100,30 +105,35 @@ void setHexSideColor(int hex, int side, CRGB color) {
   }
 }
 
-// Set multiple hexes at once
 void setAllHexes(CRGB color) {
   for (int i = 0; i < NUM_HEXES; i++) {
     setHexColor(i, color);
   }
 }
 
-// Re-sync leds[] from hexColor[] (call after direct hexColor edits)
 void applyHexColors() {
   for (int i = 0; i < NUM_HEXES; i++) {
     setHexColor(i, hexColor[i]);
   }
 }
 
-// Push to hardware
+// Push to hardware — mutex-guarded so Core 0 LED task and Core 1 won't clash.
 void pushLEDs() {
   if (rtCfg.simulateHardware) return;
+  if (ledMutex) xSemaphoreTake(ledMutex, portMAX_DELAY);
   FastLED.show();
+  if (ledMutex) xSemaphoreGive(ledMutex);
 }
 
 // -----------------------------------------------------------------------------
-// Effect runner — call from updateLEDs() every loop()
+// Effect runner
 // -----------------------------------------------------------------------------
 void startEffect(AnimEffect effect) {
+  if (currentEffect == ANIM_NONE) {
+    // Save board state so stopEffect() can restore it
+    memcpy(hexColorSnapshot, hexColor, sizeof(hexColor));
+    effectSnapshotValid = true;
+  }
   currentEffect = effect;
   animStartMs   = millis();
 }
@@ -131,11 +141,16 @@ void startEffect(AnimEffect effect) {
 void stopEffect() {
   currentEffect = ANIM_NONE;
   FastLED.setBrightness(rtCfg.defaultBrightness);
-  setAllHexes(CRGB::Black);
+  if (effectSnapshotValid) {
+    memcpy(hexColor, hexColorSnapshot, sizeof(hexColor));
+    applyHexColors();
+    effectSnapshotValid = false;
+  } else {
+    setAllHexes(CRGB::Black);
+  }
   pushLEDs();
 }
 
-// Rainbow: rotating hue mapped across hex index
 static void tickRainbow(uint32_t elapsed) {
   uint8_t hueOffset = (elapsed / 20) & 0xFF;
   for (int i = 0; i < NUM_HEXES; i++) {
@@ -150,14 +165,12 @@ static void tickRainbow(uint32_t elapsed) {
   }
 }
 
-// Pulse: sine-wave brightness, slow hue drift across all hexes
 static void tickPulse(uint32_t elapsed) {
   uint8_t val = beatsin8(30, 40, 255);
   uint8_t hue = elapsed / 200;
   fill_solid(leds, NUM_LEDS, CHSV(hue, 200, val));
 }
 
-// Spiral: ring-by-ring outward from center hex 30
 static const uint8_t SPIRAL_RINGS[5][24] = {
   {30,
    255,255,255,255,255,255,255,255,255,255,255,
@@ -173,8 +186,8 @@ static const uint8_t SPIRAL_RINGS[5][24] = {
 };
 
 static void tickSpiral(uint32_t elapsed) {
-  uint32_t ringMs    = 350;
-  int      activeRing = (int)(elapsed / ringMs);
+  uint32_t ringMs = 350;
+  int activeRing  = (int)(elapsed / ringMs);
   if (activeRing > 4) activeRing = 4;
 
   uint8_t hue = (elapsed / 10) & 0xFF;
@@ -190,7 +203,6 @@ static void tickSpiral(uint32_t elapsed) {
   }
 }
 
-// Sparkle: random hex flickers white
 static void tickSparkle(uint32_t elapsed) {
   fadeToBlackBy(leds, NUM_LEDS, 10);
   if (random8() < 40) {
@@ -199,12 +211,11 @@ static void tickSparkle(uint32_t elapsed) {
   }
 }
 
-// Wave: color sweeps left-to-right by column (col 0–8)
 static const uint8_t WAVE_COL_START[9] = {0, 5,11,18,26,35,43,50,56};
 static const uint8_t WAVE_COL_SIZE[9]  = {5, 6, 7, 8, 9, 8, 7, 6, 5};
 static void tickWave(uint32_t elapsed) {
-  uint8_t  hue     = (elapsed / 15) & 0xFF;
-  uint32_t period  = 1500;
+  uint8_t  hue    = (elapsed / 15) & 0xFF;
+  uint32_t period = 1500;
   int      waveCol = (int)(((elapsed % period) * 9UL) / period);
 
   for (int col = 0; col < 9; col++) {
@@ -217,7 +228,6 @@ static void tickWave(uint32_t elapsed) {
   }
 }
 
-// Main animation tick — call from updateLEDs()
 static void tickEffect() {
   if (currentEffect == ANIM_NONE) return;
   uint32_t elapsed = millis() - animStartMs;
@@ -232,10 +242,10 @@ static void tickEffect() {
 }
 
 // -----------------------------------------------------------------------------
-// LED test: rainbow wave through all hexes sequentially
+// LED test
 // -----------------------------------------------------------------------------
 void runLEDTest() {
-  if (rtCfg.debugSerial) RPC.println("[M4] LED test: scanning all 915 LEDs...");
+  if (rtCfg.debugSerial) Serial.println(F("LED test: scanning all 915 LEDs..."));
   for (int h = 0; h < NUM_HEXES; h++) {
     FastLED.clear();
     uint8_t hue = (uint8_t)((h * 255) / NUM_HEXES);
@@ -245,7 +255,22 @@ void runLEDTest() {
   }
   FastLED.clear();
   FastLED.show();
-  if (rtCfg.debugSerial) RPC.println("[M4] LED test: complete");
+  if (rtCfg.debugSerial) Serial.println(F("LED test: complete"));
+}
+
+// -----------------------------------------------------------------------------
+// updateLEDs() — called by the LED task on Core 0 every loop
+// -----------------------------------------------------------------------------
+void updateLEDs() {
+  uint32_t now = millis();
+  if (now - lastLEDUpdate < rtCfg.ledUpdateMs) return;
+  lastLEDUpdate = now;
+
+  if (currentEffect != ANIM_NONE) {
+    tickEffect();
+  }
+
+  pushLEDs();
 }
 
 // -----------------------------------------------------------------------------
@@ -254,33 +279,4 @@ void runLEDTest() {
 void setBrightness(uint8_t b) {
   if (b > rtCfg.maxBrightness) b = rtCfg.maxBrightness;
   FastLED.setBrightness(b);
-}
-
-// -----------------------------------------------------------------------------
-// updateLEDs() — call every loop()
-// Ticks flash state machine, runs effects, pushes to hardware,
-// then writes the full LED snapshot to shared SRAM for M7 to broadcast.
-// -----------------------------------------------------------------------------
-void updateLEDs() {
-  uint32_t now = millis();
-  if (now - lastLEDUpdate < rtCfg.ledUpdateMs) return;
-  lastLEDUpdate = now;
-
-  tickHexFlash();
-
-  if (currentEffect != ANIM_NONE) {
-    tickEffect();
-  }
-
-  pushLEDs();
-
-  // Write LED snapshot to shared SRAM — M7 reads this to update the browser
-  for (int i = 0; i < NUM_HEXES; i++) {
-    sharedState.leds.r[i] = hexColor[i].r;
-    sharedState.leds.g[i] = hexColor[i].g;
-    sharedState.leds.b[i] = hexColor[i].b;
-  }
-  sharedState.leds.brightness   = FastLED.getBrightness();
-  sharedState.leds.activeEffect = (uint8_t)currentEffect;
-  sharedState.leds.frameCount++;
 }

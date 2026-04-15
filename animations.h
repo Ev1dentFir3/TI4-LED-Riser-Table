@@ -3,21 +3,24 @@
 #include "led_control.h"
 
 // =============================================================================
-// TI4 Hex Riser - Game Animations (M4)
+// TI4 Hex Riser - Game Animations
 // =============================================================================
-// handleNetwork() removed — M7 handles WiFi on its own core.
-// animDelay() now calls updateLEDs() to keep LED frames smooth during
-// long blocking sequences (roulette, boot snake, phase transitions).
+// Boot sequence and phase-transition animations.
+// Per-phase idle animations (join fade, picker pulse, etc.) live in game_state.h.
 // =============================================================================
+
+// network.h is included after this file, so forward-declare what we need.
+void handleNetwork();
 
 // -----------------------------------------------------------------------------
 // animDelay() — replaces delay() inside animation code.
-// Keeps LED frames smooth without touching network (M7's job now).
+// handleNetwork() is a no-op with AsyncWebServer (handled in background),
+// but kept here so the call site is consistent and easy to extend.
 // -----------------------------------------------------------------------------
 static void animDelay(uint32_t ms) {
   uint32_t start = millis();
   while (millis() - start < ms) {
-    updateLEDs();
+    handleNetwork();
   }
 }
 
@@ -26,7 +29,7 @@ static void animDelay(uint32_t ms) {
 // Only BOOT_ANIM_TAIL hexes are lit at a time; tail turns off as head advances.
 // -----------------------------------------------------------------------------
 void runBootAnimation() {
-  if (rtCfg.debugSerial) RPC.println("[M4] Boot: running snake animation");
+  if (rtCfg.debugSerial) Serial.println(F("Boot: running snake animation"));
 
   for (int i = 0; i < NUM_HEXES + BOOT_ANIM_TAIL; i++) {
     if (i < NUM_HEXES) {
@@ -42,7 +45,7 @@ void runBootAnimation() {
   FastLED.clear();
   pushLEDs();
 
-  if (rtCfg.debugSerial) RPC.println("[M4] Boot: animation complete");
+  if (rtCfg.debugSerial) Serial.println(F("Boot: animation complete"));
 }
 
 // -----------------------------------------------------------------------------
@@ -54,6 +57,7 @@ void runCenterOutPulse() {
   uint32_t startMs = millis();
   while (millis() - startMs < 1800) {
     updateLEDs();
+    handleNetwork();
   }
   stopEffect();
 }

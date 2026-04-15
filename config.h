@@ -2,6 +2,7 @@
 
 // =============================================================================
 // TI4 Hex Riser - Configuration
+// Target: ESP32-DOWP-V3
 // =============================================================================
 // Edit this file to change pin assignments, WiFi credentials, and debug flags.
 // All hardware-specific settings live here so nothing else needs editing.
@@ -9,16 +10,16 @@
 // -----------------------------------------------------------------------------
 // Hardware
 // -----------------------------------------------------------------------------
-#define LED_PIN        6        // FastLED data pin (GPIO 6)
+#define LED_PIN        13       // FastLED data pin — GPIO 6-11 are reserved for flash on ESP32-WROOM
 #define NUM_LEDS       915      // 61 hexes × 15 LEDs each
 #define NUM_HEXES      61
 #define LEDS_PER_HEX   15
 
-#define I2C_SDA        20       // MCP23017 I2C SDA
-#define I2C_SCL        21       // MCP23017 I2C SCL
+#define I2C_SDA        21       // MCP23017 I2C SDA (ESP32 default)
+#define I2C_SCL        22       // MCP23017 I2C SCL (ESP32 default)
 
 // MCP23017 I2C addresses (0x20–0x23, set via A0/A1/A2 pins on board)
-#define MCP_ADDR_1     0x20    // Keyboards 1–2  ← STUB: wire when boards arrive
+#define MCP_ADDR_1     0x20    // Keyboards 1–2
 #define MCP_ADDR_2     0x21    // Keyboards 3–4
 #define MCP_ADDR_3     0x22    // Keyboards 5–6
 #define MCP_ADDR_4     0x23    // Keyboards 7–8
@@ -38,29 +39,31 @@
 // -----------------------------------------------------------------------------
 // Station mode (home network) — tried first.
 // Leave WIFI_HOME_SSID empty ("") to skip and go straight to AP mode.
-#define WIFI_HOME_SSID      "The Network"               // your home network SSID (leave blank to use AP mode only)
-#define WIFI_HOME_PASSWORD  "letmeinplease"               // your home network password
-#define WIFI_HOME_TIMEOUT_MS 10000   // how long to wait before giving up
+#define WIFI_HOME_SSID       "The Network"
+#define WIFI_HOME_PASSWORD   "letmeinplease"
+#define WIFI_HOME_TIMEOUT_MS 10000
 
 // Fallback Access Point — used when home network is unavailable or skipped.
 #define WIFI_AP_SSID        "TI4-HexRiser"
 #define WIFI_AP_PASSWORD    "twilight4"
-#define WIFI_AP_IP          "192.168.3.1"
+
+// ESP32-DOWP-V3 built-in LED — GPIO 2 on most WROOM modules.
+// If your board has no built-in LED, this is harmless.
+#ifndef LED_BUILTIN
+  #define LED_BUILTIN 2
+#endif
 
 #define HTTP_PORT       80
-#define WS_PORT         81
-#define BROADCAST_MS    50    // push full LED state to browser (ms)
+#define BROADCAST_MS    100   // browser polls /poll at this interval (ms)
 
 // -----------------------------------------------------------------------------
 // Debug / Test Flags
 // -----------------------------------------------------------------------------
-// Set to true to enable a mode; only one should be active at a time.
-
-#define SIMULATE_HARDWARE   true    // true → skip FastLED.show(); use Serial cmds
-#define DEBUG_LED_TEST      false   // true → rainbow wave across all hexes on boot
-#define DEBUG_KEYBOARD_TEST false   // true → print key presses to Serial
-#define DEBUG_WEB_TEST      false   // true → log all WebSocket messages to Serial
-#define DEBUG_SERIAL        true    // true → general Serial.print() output
+#define SIMULATE_HARDWARE   false
+#define DEBUG_LED_TEST      false
+#define DEBUG_KEYBOARD_TEST false
+#define DEBUG_WEB_TEST      false
+#define DEBUG_SERIAL        true
 
 // -----------------------------------------------------------------------------
 // Game
@@ -68,25 +71,25 @@
 #define MAX_PLAYERS     8
 
 // Timing constants
-#define TURN_WARNING_MS      300000   // 5 min before red pulse warning
-#define BOOT_ANIM_SPEED_MS   50       // ms between hex advances in boot snake
-#define BOOT_ANIM_TAIL           5    // number of hexes lit at once in boot snake
-#define SPEAKER_ROULETTE_LAPS     10   // full loops around players before landing on winner
-#define SPEAKER_ROULETTE_STEP_MS 500  // ms per step in the roulette animation
-#define JOIN_FADE_PERIOD_MS   1000    // unlocked color fade cycle (ms)
-#define JOIN_FADE_MIN        51       // min brightness when fading (20%)
-#define JOIN_FADE_MAX        255      // max brightness when fading (100%)
+#define TURN_WARNING_MS      300000
+#define BOOT_ANIM_SPEED_MS   100
+#define BOOT_ANIM_TAIL           15
+#define SPEAKER_ROULETTE_LAPS     5
+#define SPEAKER_ROULETTE_STEP_MS 250
+#define JOIN_FADE_PERIOD_MS   1000
+#define JOIN_FADE_MIN        51
+#define JOIN_FADE_MAX        255
 
 // Animation constants
-#define EDGE_PULSE_SPREAD    3        // neighbor depth for active-player edge pulse
-#define PASSED_DIM_PERCENT   50       // home hex brightness % when player passes
+#define EDGE_PULSE_SPREAD    3
+#define PASSED_DIM_PERCENT   50
 
 // Pulse ranges for each phase (used with beatsin8 at 60 BPM)
-#define STRATEGY_PULSE_MIN   128      // strategy picker: 50% to 100%
+#define STRATEGY_PULSE_MIN   128
 #define STRATEGY_PULSE_MAX   255
-#define STATUS_PULSE_MIN     51       // status phase: 20% to 50%
+#define STATUS_PULSE_MIN     51
 #define STATUS_PULSE_MAX     128
-#define AGENDA_PULSE_MIN     51       // agenda phase: 20% to 50%
+#define AGENDA_PULSE_MIN     51
 #define AGENDA_PULSE_MAX     128
 
 // Home hex assignments per player count (position order matches keyboard order)
@@ -96,7 +99,6 @@ static const uint8_t HOME_HEXES_6P[6] = {  27, 54, 51, 33, 6, 9 };
 static const uint8_t HOME_HEXES_7P[7] = {  26 ,55, 58, 50, 5, 2, 10 };
 static const uint8_t HOME_HEXES_8P[8] = {  26 ,55, 58, 50, 34, 5, 2, 10 };
 
-// Returns the home hex for the Nth active-player position given a player count
 inline uint8_t getPlayerHomeHex(uint8_t positionIndex, uint8_t numPlayers) {
   switch (numPlayers) {
     case 4: return HOME_HEXES_4P[positionIndex];
@@ -104,7 +106,7 @@ inline uint8_t getPlayerHomeHex(uint8_t positionIndex, uint8_t numPlayers) {
     case 6: return HOME_HEXES_6P[positionIndex];
     case 7: return HOME_HEXES_7P[positionIndex];
     case 8: return HOME_HEXES_8P[positionIndex];
-    default: return 30;  // fallback: center hex
+    default: return 30;
   }
 }
 
@@ -141,18 +143,16 @@ enum GamePhase {
 };
 
 struct Player {
-  uint8_t  id;                   // 1–8 (fixed: Player 1 = Keyboard 1)
-  bool     active;               // true if keyboard detected / simulated
-  uint8_t  initiative;           // derived from strategy card (1–8)
-  uint32_t colorHex;             // packed RGB, set from COLOR_PALETTE
-  bool     hasPassed;            // true once player passes in action phase
-
-  // --- New fields for game state ---
-  uint8_t  selectedColorIndex;   // 0–7, index into COLOR_PALETTE
-  bool     colorLocked;          // true once player confirms color in setup
-  uint8_t  strategyCard;         // 1–8, 0 = not yet selected
-  bool     strategyLocked;       // true once strategy card confirmed
-  bool     readyForNext;         // true when player presses End Turn in status/agenda
-  uint32_t turnStartMs;          // millis() when current action turn began
-  uint8_t  homeHex;              // assigned home hex (0–60), set at game start
+  uint8_t  id;
+  bool     active;
+  uint8_t  initiative;
+  uint32_t colorHex;
+  bool     hasPassed;
+  uint8_t  selectedColorIndex;
+  bool     colorLocked;
+  uint8_t  strategyCard;
+  bool     strategyLocked;
+  bool     readyForNext;
+  uint32_t turnStartMs;
+  uint8_t  homeHex;
 };

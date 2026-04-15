@@ -2,11 +2,15 @@
 #include "config.h"
 
 // =============================================================================
-// TI4 Hex Riser - M7 Runtime Settings
+// TI4 Hex Riser - Runtime Settings
 // =============================================================================
-// Mirrors legacy runtime_settings.h so the settings page still works fully.
-// Fields marked (M4 only) are kept for settings page round-trip but are
-// not acted on by M7 — M4 acts on them when settings are saved.
+// Shadows config.h #defines with a live-mutable struct so the web settings
+// page can change values at runtime.  Include this BEFORE led_control.h,
+// keyboard_control.h, and network.h.
+//
+// All code that previously read a #define constant should instead read
+// the matching rtCfg field.  The struct is initialized from the #defines
+// in config.h, so the defaults always come from there.
 // =============================================================================
 
 struct RuntimeConfig {
@@ -20,18 +24,21 @@ struct RuntimeConfig {
   // LED
   uint8_t  defaultBrightness;
   uint8_t  maxBrightness;
-  uint16_t ledUpdateMs;       // M4 only — kept for settings page
+  uint16_t ledUpdateMs;
   uint16_t broadcastMs;
-  uint8_t  sideGap;
+  uint8_t  sideGap;             // SVG side line inset (browser-only, served via /getsettings)
 
   // Debug / simulation
-  bool     simulateHardware;  // M4 only
+  bool     simulateHardware;
   bool     debugSerial;
   bool     debugWeb;
-  bool     debugLed;          // M4 only
-  bool     debugKeyboard;     // M4 only
+  bool     debugLed;
+  bool     debugKeyboard;
 };
 
+// One global instance — initialized from config.h defaults at boot.
+// network.h savesettings route writes into this struct; changes take
+// effect immediately (some, like WiFi credentials, require a reboot).
 RuntimeConfig rtCfg = {
   WIFI_HOME_SSID,
   WIFI_HOME_PASSWORD,

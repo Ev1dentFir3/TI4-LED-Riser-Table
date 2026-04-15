@@ -89,15 +89,16 @@ button.dim:hover { color: #8899aa; }
   min-height: 2em;
 }
 #hex-info strong { color: #99ccee; font-size: 0.95rem; }
-input[type=color] {
-  width: 100%;
-  height: 30px;
-  border: 1px solid #2a4a6a;
-  border-radius: 4px;
-  background: #0f1820;
-  cursor: pointer;
-  padding: 2px;
+.player-swatch {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 6px; margin-bottom: 3px;
+  border: 2px solid transparent; border-radius: 4px;
+  cursor: pointer; font-size: 0.75rem; background: #0f1820;
+  transition: border-color 0.12s;
 }
+.player-swatch:hover { border-color: #4a9acc; }
+.player-swatch.selected { border-color: #ffffff; font-weight: bold; }
+.swatch-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
 .side-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; }
 .side-grid .gap { }
 .side-btn { font-size: 0.7rem; padding: 5px 2px; }
@@ -170,33 +171,37 @@ input[type=color] {
   <div id="hex-info">Click any hex</div>
 
   <div>
-    <div class="lbl">Side Color</div>
-    <div class="side-grid">
-      <div class="gap"></div>
-      <button class="side-btn" data-side="0">Top</button>
-      <div class="gap"></div>
-      <button class="side-btn" data-side="5">TL</button>
-      <div class="gap"></div>
-      <button class="side-btn" data-side="1">TR</button>
-      <button class="side-btn" data-side="4">BL</button>
-      <div class="gap"></div>
-      <button class="side-btn" data-side="2">BR</button>
-      <div class="gap"></div>
-      <button class="side-btn" data-side="3">Bot</button>
-      <div class="gap"></div>
-    </div>
-    <div class="sublbl" style="margin-top:3px">Side: <span id="sel-side-name">Top (0)</span></div>
-    <input type="color" id="side-color" value="#0088ff" style="margin-top:4px">
-    <div class="two-col" style="margin-top:3px">
-      <button onclick="applySide()">This Side</button>
-      <button onclick="applyAllSides()">All Sides</button>
-    </div>
-    <button class="dim" style="margin-top:3px;width:100%" onclick="clearSides()">Clear Sides</button>
+    <div class="lbl">Players</div>
+    <div id="player-swatches"><span class="sublbl">Waiting for hardware&hellip;</span></div>
+  </div>
+
+  <button id="btn-all-sides" onclick="applyAllSides()" style="width:100%;margin-top:4px">Claim Hex (All Sides)</button>
+  <div class="two-col" style="margin-top:3px">
+    <button onclick="applySide()">This Side</button>
+    <button class="dim" onclick="clearSides()">Clear Sides</button>
   </div>
 
   <hr>
-  <button class="dim" style="width:100%" onclick="clearAllHexes()">Clear All</button>
+  <button id="btn-clear-all" class="dim" style="width:100%" onclick="onClearAllClick()">Clear All</button>
   <a href="/settings" style="display:block;margin-top:10px;text-align:center;color:#888;font-size:.8em;text-decoration:none">&#9881; Settings</a>
+
+  <hr>
+  <div class="lbl">Side</div>
+  <div class="side-grid">
+    <div class="gap"></div>
+    <button class="side-btn" data-side="0">Top</button>
+    <div class="gap"></div>
+    <button class="side-btn" data-side="5">TL</button>
+    <div class="gap"></div>
+    <button class="side-btn" data-side="1">TR</button>
+    <button class="side-btn" data-side="4">BL</button>
+    <div class="gap"></div>
+    <button class="side-btn" data-side="2">BR</button>
+    <div class="gap"></div>
+    <button class="side-btn" data-side="3">Bot</button>
+    <div class="gap"></div>
+  </div>
+  <div class="sublbl" style="margin-top:3px">Side: <span id="sel-side-name">Top (0)</span></div>
 </div>
 
 <div id="main">
@@ -254,7 +259,6 @@ input[type=color] {
   var _prevColors = new Int32Array(61).fill(-1);
 
   function buildGrid(sideGap) {
-    console.log('[Grid] buildGrid called, sideGap=' + sideGap);
     // Clear any previous build and reset caches
     while (svg.lastChild) svg.removeChild(svg.lastChild);
     _sideEls.fill(null);
@@ -298,20 +302,10 @@ input[type=color] {
   window.buildHexGrid = buildGrid;
 
   // Fetch current sideGap from settings, then draw
-  console.log('[Grid] fetching /getsettings...');
   fetch('/getsettings', {cache: 'no-store'})
-    .then(function (r) {
-      console.log('[Grid] /getsettings status=' + r.status);
-      return r.json();
-    })
-    .then(function (cfg) {
-      console.log('[Grid] settings JSON ok, sideGap=' + cfg.sideGap);
-      buildGrid(cfg.sideGap != null ? +cfg.sideGap : 4);
-    })
-    .catch(function (e) {
-      console.warn('[Grid] /getsettings failed:', e, '— using default sideGap=4');
-      buildGrid(4);
-    });
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) { buildGrid(cfg.sideGap != null ? +cfg.sideGap : 4); })
+    .catch(function ()  { buildGrid(4); });
 
   // Bridge functions — use cached element refs, skip DOM write when color unchanged.
   window.setHexAllSides = function (i, r, g, b) {
@@ -362,10 +356,17 @@ input[type=color] {
 // ============================================================
 // State
 // ============================================================
-var selectedHex  = -1;
-var selectedSide = 0;
-var prevSelPoly  = null;
-var SIDE_NAMES   = ['Top (0)','TR (1)','BR (2)','Bot (3)','BL (4)','TL (5)'];
+var selectedHex        = -1;
+var selectedSide       = 0;
+var prevSelPoly        = null;
+var SIDE_NAMES         = ['Top (0)','TR (1)','BR (2)','Bot (3)','BL (4)','TL (5)'];
+var _selectedPlayerIdx = -1;
+var _selectedPlayerRGB = [255, 255, 255];
+var _clearStep         = 0;
+var _clearTimer        = null;
+var _clearLabels       = ['Clear All','Are you sure?','Are you really sure?','This CANNOT be undone!'];
+var _clearBgs          = ['','#2a1a10','#3a1510','#4a1010'];
+var _clearBorders      = ['','#553333','#883333','#aa3333'];
 
 // ============================================================
 // Hex selection
@@ -393,29 +394,96 @@ sideBtns.forEach(function (btn) {
 document.querySelector('.side-btn[data-side="0"]').classList.add('active');
 
 // ============================================================
-// Fill / side color actions
+// Player swatches
+// ============================================================
+function hexToRgb(h) {
+  var n = parseInt(h, 16);
+  return [(n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF];
+}
+function selectPlayer(idx, r, g, b) {
+  _selectedPlayerIdx = idx;
+  _selectedPlayerRGB = [r, g, b];
+  document.querySelectorAll('.player-swatch').forEach(function (el) {
+    el.classList.toggle('selected', parseInt(el.getAttribute('data-idx')) === idx);
+  });
+}
+function fetchAndRenderPlayers() {
+  fetch('/players', {cache: 'no-store'})
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var c = document.getElementById('player-swatches');
+      if (!c) return;
+      c.innerHTML = '';
+      if (!data.players || !data.players.length) {
+        c.innerHTML = '<span class="sublbl">No active players</span>';
+        return;
+      }
+      data.players.forEach(function (p) {
+        var rgb = hexToRgb(p.color);
+        var el = document.createElement('div');
+        el.className = 'player-swatch' + (_selectedPlayerIdx === p.idx ? ' selected' : '');
+        el.setAttribute('data-idx', p.idx);
+        el.onclick = (function (i, r, g, b) { return function () { selectPlayer(i, r, g, b); }; })(p.idx, rgb[0], rgb[1], rgb[2]);
+        var dot = document.createElement('div');
+        dot.className = 'swatch-dot';
+        dot.style.background = '#' + p.color;
+        var lbl = document.createElement('span');
+        lbl.textContent = 'Player ' + (p.idx + 1) + (p.locked ? ' \u2713' : '');
+        el.appendChild(dot);
+        el.appendChild(lbl);
+        c.appendChild(el);
+      });
+    })
+    .catch(function () {});
+}
+
+// ============================================================
+// Hex color actions
 // ============================================================
 function applySide() {
-  if (selectedHex < 0) return;
-  var hex = document.getElementById('side-color').value.slice(1).toUpperCase();
-  send('SETHEXSIDE:' + selectedHex + ':' + selectedSide + ':' + hex);
-  setHexSide(selectedHex, selectedSide, parseInt(hex.slice(0,2),16), parseInt(hex.slice(2,4),16), parseInt(hex.slice(4,6),16));
+  if (selectedHex < 0 || _selectedPlayerIdx < 0) return;
+  var r = _selectedPlayerRGB[0], g = _selectedPlayerRGB[1], b = _selectedPlayerRGB[2];
+  var hex = ('00' + r.toString(16)).slice(-2) + ('00' + g.toString(16)).slice(-2) + ('00' + b.toString(16)).slice(-2);
+  send('SETHEXSIDE:' + selectedHex + ':' + selectedSide + ':' + hex.toUpperCase());
+  setHexSide(selectedHex, selectedSide, r, g, b);
 }
 function applyAllSides() {
-  if (selectedHex < 0) return;
-  var hex = document.getElementById('side-color').value.slice(1).toUpperCase();
-  var r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
-  for (var s = 0; s < 6; s++) send('SETHEXSIDE:' + selectedHex + ':' + s + ':' + hex);
-  setHexAllSides(selectedHex, r, g, b);
+  if (selectedHex < 0 || _selectedPlayerIdx < 0) return;
+  send('CLAIMHEX:' + selectedHex + ':' + _selectedPlayerIdx);
+  setHexAllSides(selectedHex, _selectedPlayerRGB[0], _selectedPlayerRGB[1], _selectedPlayerRGB[2]);
 }
 function clearSides() {
   if (selectedHex < 0) return;
-  for (var s = 0; s < 6; s++) send('SETHEXSIDE:' + selectedHex + ':' + s + ':000000');
+  send('CLAIMHEX:' + selectedHex + ':255');
   clearHexSides(selectedHex);
 }
-function clearAllHexes() {
-  send('ALL:000000');
-  setActiveFxBtn('');
+
+// ============================================================
+// Clear All — 4-step escalating confirmation
+// ============================================================
+function _resetClearBtn() {
+  _clearStep = 0;
+  var btn = document.getElementById('btn-clear-all');
+  btn.textContent = _clearLabels[0];
+  btn.style.background = '';
+  btn.style.borderColor = '';
+  btn.style.color = '';
+}
+function onClearAllClick() {
+  if (_clearTimer) { clearTimeout(_clearTimer); _clearTimer = null; }
+  _clearStep++;
+  if (_clearStep >= _clearLabels.length) {
+    send('ALL:000000');
+    setActiveFxBtn('');
+    _resetClearBtn();
+    return;
+  }
+  var btn = document.getElementById('btn-clear-all');
+  btn.textContent = _clearLabels[_clearStep];
+  btn.style.background  = _clearBgs[_clearStep];
+  btn.style.borderColor = _clearBorders[_clearStep];
+  btn.style.color = _clearStep >= 2 ? '#ffaaaa' : '#cc8888';
+  _clearTimer = setTimeout(_resetClearBtn, 3000);
 }
 
 // ============================================================
@@ -445,12 +513,11 @@ function fx(name) {
 }
 
 // ============================================================
-// WebSocket (server → browser binary push via /ws)
-// Commands sent browser → server via fetch('/cmd?msg=...')
-// WebSocket auto-reconnects on close; watchdog detects unresponsive boards.
+// HTTP polling (server -> browser) — replaces SSE
+// Short-lived GET /poll every 100 ms; no persistent connection.
 // ============================================================
-console.log('[M7] script reached WS section');
-var _online = false;
+var _pollBusy = false;
+var _online   = false;
 
 function setOnline(on) {
   if (on === _online) return;
@@ -459,82 +526,37 @@ function setOnline(on) {
   document.getElementById('ws-label').textContent = on ? 'Hardware online' : 'Hardware offline';
 }
 
+function pollHex() {
+  if (_pollBusy) return;          // skip if previous poll still in-flight
+  _pollBusy = true;
+  fetch('/poll', {cache: 'no-store'})
+    .then(function (r) { return r.text(); })
+    .then(function (data) {
+      _pollBusy = false;
+      setOnline(true);
+      for (var i = 0; i < 61 && (i + 1) * 6 <= data.length; i++) {
+        var byteOffset = i * 6;
+        setHexAllSides(i,
+          parseInt(data.slice(byteOffset,     byteOffset + 2), 16),
+          parseInt(data.slice(byteOffset + 2, byteOffset + 4), 16),
+          parseInt(data.slice(byteOffset + 4, byteOffset + 6), 16));
+      }
+    })
+    .catch(function () {
+      _pollBusy = false;
+      setOnline(false);
+    });
+}
+
 function send(msg) {
-  fetch('/cmd?msg=' + encodeURIComponent(msg)).catch(function () {});
+  fetch('/cmd?' + msg).catch(function () {});  // fire-and-forget; silent if offline
 }
 
-function handleBinary(buf) {
-  var view = new DataView(buf);
-  if (view.byteLength < 1) return;
-  var type = view.getUint8(0);
+setInterval(pollHex, 100);
+pollHex();  // immediate first poll
 
-  if (type === 0x00) return;  // keepalive — _lastMsgMs already updated by onmessage
-
-  if (type === 0x01 && view.byteLength >= 184) {
-    // ALLHEX: type(1) + 61 × RGB(3) = 184 bytes
-    for (var i = 0; i < 61; i++) {
-      var o = 1 + i * 3;
-      setHexAllSides(i, view.getUint8(o), view.getUint8(o+1), view.getUint8(o+2));
-    }
-    return;
-  }
-
-  if (type === 0x02 && view.byteLength >= 2) {
-    // BRIGHTNESS: type(1) + value(1)
-    var b = view.getUint8(1);
-    var sl = document.getElementById('brightness');
-    if (sl) { sl.value = b; document.getElementById('bright-val').textContent = b; }
-    return;
-  }
-
-  // type 0x03 GAMESTATE: reserved for future game UI
-}
-
-var _ws = null;
-var _lastMsgMs = 0;
-
-function connectWS() {
-  console.log('[WS] connecting...');
-  if (_ws) { _ws.onclose = null; _ws.close(); }
-  var proto = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
-  _ws = new WebSocket(proto + window.location.host + '/ws');
-  _ws.binaryType = 'arraybuffer';
-  _ws.onopen = function () {
-    console.log('[WS] connected');
-    _lastMsgMs = Date.now();
-    setOnline(true);
-  };
-  _ws.onclose = function () {
-    console.warn('[WS] closed — reconnecting in 500ms...');
-    setOnline(false);
-    setTimeout(connectWS, 500);
-  };
-  _ws.onerror = function (e) {
-    console.warn('[WS] error', e);
-    setOnline(false);
-  };
-  _ws.onmessage = function (evt) {
-    _lastMsgMs = Date.now();
-    if (evt.data instanceof ArrayBuffer) handleBinary(evt.data);
-  };
-}
-
-// Heartbeat watchdog: server sends keepalive every 3s.
-// If nothing arrives for 6s, force reconnect and show offline.
-// This fires even when the TCP connection is still half-open (board unplugged).
-setInterval(function () {
-  if (!_online) return;
-  if (_lastMsgMs > 0 && Date.now() - _lastMsgMs > 6000) {
-    console.warn('[WS] heartbeat timeout — board offline, reconnecting...');
-    setOnline(false);
-    setTimeout(connectWS, 500);
-  }
-}, 1000);
-
-// Delay WS connect so page + /getsettings finish before /ws opens.
-// Nina TCP backlog=1 — simultaneous connections drop silently.
-// 1500ms gives the page load and /getsettings plenty of time to complete.
-setTimeout(connectWS, 1500);
+setInterval(fetchAndRenderPlayers, 5000);
+fetchAndRenderPlayers();
 </script>
 </body>
 </html>

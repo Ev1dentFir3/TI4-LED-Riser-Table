@@ -3,10 +3,6 @@
 #include "config.h"
 #include "led_control.h"
 #include "hex_neighbors.h"
-#include "shared_state.h"
-
-// Forward declaration — defined in SECTION 9 below, called from earlier sections.
-void pushGameSnapshot();
 
 // =============================================================================
 // TI4 Hex Riser - Game State Machine
@@ -123,6 +119,41 @@ static uint8_t hexDistance(uint8_t from, uint8_t to) {
   return dist[to];
 }
 
+// Returns true if hex h is on the board edge (has at least one missing neighbor).
+static bool isEdgeHex(uint8_t h) {
+  for (int dir = 0; dir < 6; dir++) {
+    if (HEX_NEIGHBORS[h][dir] < 0) return true;
+  }
+  return false;
+}
+
+// Returns the edge hex whose Euclidean position is closest to homeHex.
+static uint8_t findClosestEdgeHex(uint8_t homeHex) {
+  float hx, hy;
+  getHexPosition(homeHex, hx, hy);
+  float   bestDist = 1e9f;
+  uint8_t bestHex  = homeHex;
+  for (uint8_t h = 0; h < NUM_HEXES; h++) {
+    if (!isEdgeHex(h)) continue;
+    float ex, ey;
+    getHexPosition(h, ex, ey);
+    float dx = ex - hx, dy = ey - hy;
+    float d  = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; bestHex = h; }
+  }
+  return bestHex;
+}
+
+// Fills out[] with up to 2 edge hex neighbors of edgeHex; returns count.
+static uint8_t getAdjacentEdgeHexes(uint8_t edgeHex, uint8_t out[2]) {
+  uint8_t count = 0;
+  for (int dir = 0; dir < 6 && count < 2; dir++) {
+    int nb = HEX_NEIGHBORS[edgeHex][dir];
+    if (nb >= 0 && isEdgeHex((uint8_t)nb)) out[count++] = (uint8_t)nb;
+  }
+  return count;
+}
+
 // =============================================================================
 // SECTION 3: Helper Utilities
 // =============================================================================
@@ -180,9 +211,9 @@ static void detectConnectedKeyboards() {
   }
 
   if (rtCfg.debugSerial) {
-    RPC.print("[M4] Game: ");
-    RPC.print(gameState.numActivePlayers);
-    RPC.println(" active players detected");
+    Serial.print(F("Game: "));
+    Serial.print(gameState.numActivePlayers);
+    Serial.println(F(" active players detected"));
   }
 }
 
@@ -272,7 +303,9 @@ static void handleColorLockIn(uint8_t playerIndex) {
   gameState.colorTaken[colorIndex] = true;
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Player color locked");
+    Serial.print(F("Game: Player "));
+    Serial.print(playerIndex + 1);
+    Serial.println(F(" locked color"));
   }
 
   // If any other unlocked player has the same color, bump them to a free color.
@@ -295,12 +328,15 @@ static void handleColorLockIn(uint8_t playerIndex) {
         players[i].selectedColorIndex = c;
         players[i].colorHex           = COLOR_PALETTE[c];
         if (rtCfg.debugSerial) {
+          Serial.print(F("Game: Player "));
+          Serial.print(i + 1);
+          Serial.print(F(" auto-reassigned to color "));
+          Serial.println(c + 1);
         }
         break;
       }
     }
   }
-  pushGameSnapshot();
 }
 
 // Highlights one player gold and blacks out all others. Used by selectRandomSpeaker.
@@ -330,12 +366,12 @@ static void selectRandomSpeaker() {
   gameState.speakerIndex = activePlayers[winnerPos];
 
   if (rtCfg.debugSerial) {
-    RPC.print("[M4] Roulette: ");
-    RPC.print(SPEAKER_ROULETTE_LAPS);
-    RPC.print(" laps + ");
-    RPC.print(winnerPos + 1);
-    RPC.print(" extra steps -> P");
-    RPC.println(gameState.speakerIndex + 1);
+    Serial.print(F("Roulette: "));
+    Serial.print(SPEAKER_ROULETTE_LAPS);
+    Serial.print(F(" laps + "));
+    Serial.print(winnerPos + 1);
+    Serial.print(F(" extra steps → P"));
+    Serial.println(gameState.speakerIndex + 1);
   }
 
   // SPEAKER_ROULETTE_LAPS full laps end at position (count-1).
@@ -357,8 +393,8 @@ static void selectRandomSpeaker() {
   animDelay(800);
 
   if (rtCfg.debugSerial) {
-    RPC.print("[M4] Game: Speaker is Player ");
-    RPC.println(gameState.speakerIndex + 1);
+    Serial.print(F("Game: Speaker is Player "));
+    Serial.println(gameState.speakerIndex + 1);
   }
 
   // Restore all player home hex colors
@@ -450,9 +486,9 @@ static void handleStrategyCardSelection(uint8_t playerIndex, uint8_t cardKey) {
     if (players[i].strategyLocked && players[i].strategyCard == cardKey) {
       flashUnavailableColor(playerIndex);  // red flash = taken
       if (rtCfg.debugSerial) {
-        RPC.print("[M4] Game: Card ");
-        RPC.print(cardKey);
-        RPC.println(" already taken");
+        Serial.print(F("Game: Card "));
+        Serial.print(cardKey);
+        Serial.println(F(" already taken"));
       }
       return;
     }
@@ -461,10 +497,10 @@ static void handleStrategyCardSelection(uint8_t playerIndex, uint8_t cardKey) {
   players[playerIndex].strategyCard = cardKey;
 
   if (rtCfg.debugSerial) {
-    RPC.print("[M4] Game: Player ");
-    RPC.print(playerIndex + 1);
-    RPC.print(" previewing strategy card ");
-    RPC.println(cardKey);
+    Serial.print(F("Game: Player "));
+    Serial.print(playerIndex + 1);
+    Serial.print(F(" previewing strategy card "));
+    Serial.println(cardKey);
   }
 }
 
@@ -488,9 +524,10 @@ static void handleStrategyLockIn(uint8_t playerIndex) {
   gameState.currentPickIndex++;
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Strategy card locked");
+    Serial.print(F("Game: Player "));
+    Serial.print(playerIndex + 1);
+    Serial.println(F(" locked strategy card"));
   }
-  pushGameSnapshot();
 }
 
 static bool checkStrategyComplete() {
@@ -525,42 +562,61 @@ static void buildActionOrder() {
 }
 
 // Called every loop() during PHASE_ACTION.
-// Active player: edge pulse (white → red after 5 min) spreading to neighbors.
-// Passed players: home hex at 50% brightness.
-// Others:         home hex at full player color.
-static void updateActivePlayerPulse() {
+// - All non-home hexes: black if unclaimed, player color if claimed (hexOwner[]).
+// - Home hexes: static player color (dimmed 50% if passed).
+// - Current active player: 3 board-edge hexes breathe white (or red if overtime).
+static void updateActionPhaseDisplay() {
   if (gameState.actionOrderSize == 0) return;
 
-  uint8_t activePlayerIdx = gameState.actionOrder[gameState.currentActionIndex];
-  uint32_t elapsed        = millis() - players[activePlayerIdx].turnStartMs;
-  bool     overTimeWarning = (elapsed >= TURN_WARNING_MS);
+  uint8_t  activeIdx = gameState.actionOrder[gameState.currentActionIndex];
+  uint32_t elapsed   = millis() - players[activeIdx].turnStartMs;
+  bool     overTime  = (elapsed >= TURN_WARNING_MS);
 
-  uint8_t pulseBrightness = beatsin8(60, 128, 255);
-  CRGB pulseColor = overTimeWarning ? CRGB::Red : CRGB::White;
-  pulseColor.nscale8(pulseBrightness);
+  uint8_t breathVal  = beatsin8(30, 60, 255);
+  CRGB breathColor   = overTime ? CRGB::Red : CRGB::White;
+  breathColor.nscale8(breathVal);
 
-  // Draw all player home hexes first
+  // Step 1: non-home hexes — claimed → owner color, unclaimed → black
+  for (uint8_t h = 0; h < NUM_HEXES; h++) {
+    bool isHome = false;
+    for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
+      if (players[i].active && players[i].homeHex == h) { isHome = true; break; }
+    }
+    if (isHome) continue;
+
+    if (hexOwner[h] >= 0 && hexOwner[h] < MAX_PLAYERS) {
+      CRGB c;
+      c.r = (players[hexOwner[h]].colorHex >> 16) & 0xFF;
+      c.g = (players[hexOwner[h]].colorHex >>  8) & 0xFF;
+      c.b =  players[hexOwner[h]].colorHex        & 0xFF;
+      setHexColor(h, c);
+    } else {
+      setHexColor(h, CRGB::Black);
+    }
+  }
+
+  // Step 2: home hexes — static, full or dimmed if passed
   for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
     if (!players[i].active) continue;
-    CRGB playerColor;
-    playerColor.r = (players[i].colorHex >> 16) & 0xFF;
-    playerColor.g = (players[i].colorHex >>  8) & 0xFF;
-    playerColor.b =  players[i].colorHex        & 0xFF;
-
-    if (players[i].hasPassed) {
-      playerColor.nscale8((uint8_t)((255UL * PASSED_DIM_PERCENT) / 100));
-    }
-    setHexColor(players[i].homeHex, playerColor);
+    CRGB c;
+    c.r = (players[i].colorHex >> 16) & 0xFF;
+    c.g = (players[i].colorHex >>  8) & 0xFF;
+    c.b =  players[i].colorHex        & 0xFF;
+    if (players[i].hasPassed) c.nscale8((uint8_t)((255UL * PASSED_DIM_PERCENT) / 100));
+    setHexColor(players[i].homeHex, c);
   }
 
-  // Overlay pulse on active player home hex edges and spread to neighbors
-  uint8_t homeHex = players[activePlayerIdx].homeHex;
-  for (int side = 0; side < 6; side++) {
-    setHexSideColor(homeHex, side, pulseColor);
+  // Step 3: breathing edge indicator — closest edge hex + up to 2 adjacent edge hexes
+  uint8_t edgeHex  = findClosestEdgeHex(players[activeIdx].homeHex);
+  uint8_t adj[2];
+  uint8_t adjCount = getAdjacentEdgeHexes(edgeHex, adj);
+
+  setHexColor(edgeHex, breathColor);
+  for (uint8_t j = 0; j < adjCount; j++) {
+    CRGB dim = breathColor;
+    dim.nscale8(150);
+    setHexColor(adj[j], dim);
   }
-  uint8_t visited[NUM_HEXES] = {0};
-  visited[homeHex] = 1;
-  spreadPulseToNeighbors(homeHex, pulseColor, EDGE_PULSE_SPREAD, visited);
 }
 
 // Player presses Key 14 to pass — removed from initiative order this round.
@@ -579,7 +635,9 @@ static void handlePlayerPass(uint8_t playerIndex) {
   buildActionOrder();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Player passed");
+    Serial.print(F("Game: Player "));
+    Serial.print(playerIndex + 1);
+    Serial.println(F(" passed"));
   }
 
   // If this was the current active player, keep currentActionIndex valid
@@ -589,7 +647,6 @@ static void handlePlayerPass(uint8_t playerIndex) {
     }
     players[gameState.actionOrder[gameState.currentActionIndex]].turnStartMs = millis();
   }
-  pushGameSnapshot();
 }
 
 // Player presses Key 15 to end their turn and pass to the next.
@@ -601,9 +658,11 @@ static void handleEndTurn(uint8_t playerIndex) {
   players[gameState.actionOrder[gameState.currentActionIndex]].turnStartMs = millis();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Turn ended");
+    Serial.print(F("Game: Player "));
+    Serial.print(playerIndex + 1);
+    Serial.print(F(" ended turn — now Player "));
+    Serial.println(gameState.actionOrder[gameState.currentActionIndex] + 1);
   }
-  pushGameSnapshot();
 }
 
 static bool checkActionComplete() {
@@ -632,15 +691,16 @@ static void startBattle(uint8_t attackerIndex, uint8_t defenderIndex) {
   pushLEDs();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Battle started");
+    Serial.print(F("Game: Battle — P"));
+    Serial.print(attackerIndex + 1);
+    Serial.print(F(" vs P"));
+    Serial.println(defenderIndex + 1);
   }
-  pushGameSnapshot();
 }
 
 static void endBattle() {
   gameState.inBattle = false;
-  if (rtCfg.debugSerial) RPC.println("[M4] Battle ended");
-  pushGameSnapshot();
+  if (rtCfg.debugSerial) Serial.println(F("Game: Battle ended"));
 }
 
 // =============================================================================
@@ -686,9 +746,10 @@ static void handleStatusReady(uint8_t playerIndex) {
   players[playerIndex].readyForNext = true;
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Player ready (status)");
+    Serial.print(F("Game: Player "));
+    Serial.print(playerIndex + 1);
+    Serial.println(F(" ready (status)"));
   }
-  pushGameSnapshot();
 }
 
 static bool checkStatusComplete() {
@@ -726,32 +787,6 @@ static void resetRoundState() {
 // SECTION 9: Phase Transitions
 // =============================================================================
 
-// Writes current game state to shared SRAM so M7 can broadcast it.
-// Call at the end of every transition and any key handler that changes
-// visible game state.
-void pushGameSnapshot() {
-  sharedState.game.currentPhase       = (uint8_t)gameState.currentPhase;
-  sharedState.game.speakerIndex       = gameState.speakerIndex;
-  sharedState.game.numActivePlayers   = gameState.numActivePlayers;
-  sharedState.game.currentPickIndex   = gameState.currentPickIndex;
-  sharedState.game.currentActionIndex = gameState.currentActionIndex;
-  sharedState.game.inBattle           = gameState.inBattle;
-  sharedState.game.battleAttacker     = gameState.battleAttacker;
-  sharedState.game.battleDefender     = gameState.battleDefender;
-  for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
-    sharedState.game.players[i].active         = players[i].active;
-    sharedState.game.players[i].colorLocked    = players[i].colorLocked;
-    sharedState.game.players[i].strategyLocked = players[i].strategyLocked;
-    sharedState.game.players[i].hasPassed      = players[i].hasPassed;
-    sharedState.game.players[i].readyForNext   = players[i].readyForNext;
-    sharedState.game.players[i].homeHex        = players[i].homeHex;
-    sharedState.game.players[i].strategyCard   = players[i].strategyCard;
-    sharedState.game.players[i].initiative     = players[i].initiative;
-    sharedState.game.players[i].colorHex       = players[i].colorHex;
-  }
-  sharedState.game.stateVersion++;
-}
-
 void transitionToSetup() {
   gameState.currentPhase = PHASE_SETUP;
   memset(gameState.colorTaken, 0, sizeof(gameState.colorTaken));
@@ -770,12 +805,13 @@ void transitionToSetup() {
   }
 
   setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
   pushLEDs();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Phase: SETUP");
+    Serial.println(F("Phase: SETUP — players selecting colors"));
+    Serial.println(F("  Keys 1-8: select color  |  Key 15: lock color  |  Key 0: start game (GM)"));
   }
-  pushGameSnapshot();
 }
 
 void transitionToStrategy() {
@@ -783,12 +819,19 @@ void transitionToStrategy() {
   buildStrategyPickOrder();
 
   setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
   pushLEDs();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Phase: STRATEGY");
+    Serial.println(F("Phase: STRATEGY — players selecting strategy cards"));
+    Serial.println(F("  Keys 1-8: select card  |  Key 15: lock card"));
+    Serial.print(F("  Pick order: "));
+    for (uint8_t i = 0; i < gameState.numActivePlayers; i++) {
+      Serial.print(F("P")); Serial.print(gameState.strategyPickOrder[i] + 1);
+      if (i < gameState.numActivePlayers - 1) Serial.print(F(" → "));
+    }
+    Serial.println();
   }
-  pushGameSnapshot();
 }
 
 void transitionToAction() {
@@ -801,7 +844,11 @@ void transitionToAction() {
     players[gameState.actionOrder[0]].turnStartMs = millis();
   }
 
-  // Return home hexes to player colors
+  // All hexes go dark; ownership cleared
+  setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
+
+  // Seed home hexes in player color
   for (uint8_t i = 0; i < MAX_PLAYERS; i++) {
     if (!players[i].active) continue;
     CRGB color;
@@ -813,9 +860,14 @@ void transitionToAction() {
   pushLEDs();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Phase: ACTION");
+    Serial.println(F("Phase: ACTION — initiative order:"));
+    for (uint8_t i = 0; i < gameState.actionOrderSize; i++) {
+      Serial.print(F("  P")); Serial.print(gameState.actionOrder[i] + 1);
+      Serial.print(F(" (card ")); Serial.print(players[gameState.actionOrder[i]].strategyCard);
+      Serial.println(F(")"));
+    }
+    Serial.println(F("  Key 14: pass  |  Key 15: end turn  |  Key 13: battle mode"));
   }
-  pushGameSnapshot();
 }
 
 void transitionToStatus() {
@@ -824,21 +876,23 @@ void transitionToStatus() {
   assignSlicesToPlayers();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Phase: STATUS");
+    Serial.println(F("Phase: STATUS — all players ready up"));
+    Serial.println(F("  Key 15: ready"));
   }
-  pushGameSnapshot();
 }
 
 void transitionToAgenda() {
   gameState.currentPhase = PHASE_AGENDA;
 
   setAllHexes(CRGB::Black);
+  for (int h = 0; h < NUM_HEXES; h++) hexOwner[h] = -1;
   pushLEDs();
 
   if (rtCfg.debugSerial) {
-    RPC.println("[M4] Phase: AGENDA");
+    Serial.print(F("Phase: AGENDA — speaker is P"));
+    Serial.println(gameState.speakerIndex + 1);
+    Serial.println(F("  Key 15 (speaker): end agenda / start next round"));
   }
-  pushGameSnapshot();
 }
 
 // =============================================================================
@@ -849,8 +903,8 @@ void transitionToAgenda() {
 
 void handleGameKey(uint8_t playerIndex, uint8_t key) {
   if (rtCfg.debugSerial) {
-    RPC.print("[M4] Key: P"); RPC.print(playerIndex + 1);
-    RPC.print(" key="); RPC.println(key);
+    Serial.print(F("Key: P")); Serial.print(playerIndex + 1);
+    Serial.print(F(" key=")); Serial.println(key);
   }
 
   switch (gameState.currentPhase) {
@@ -913,14 +967,16 @@ void handleGameKey(uint8_t playerIndex, uint8_t key) {
 // =============================================================================
 
 void updateGameState() {
+  bool effectActive = (currentEffect != ANIM_NONE);
+
   switch (gameState.currentPhase) {
 
     case PHASE_SETUP:
-      updateJoinModeDisplay();
+      if (!effectActive) updateJoinModeDisplay();
       break;
 
     case PHASE_STRATEGY:
-      updateStrategyPickerPulse();
+      if (!effectActive) updateStrategyPickerPulse();
       if (checkStrategyComplete()) {
         runCenterOutPulse();
         transitionToAction();
@@ -930,20 +986,20 @@ void updateGameState() {
     case PHASE_ACTION:
       if (checkActionComplete()) {
         transitionToStatus();
-      } else if (!gameState.inBattle) {
-        updateActivePlayerPulse();
+      } else if (!gameState.inBattle && !effectActive) {
+        updateActionPhaseDisplay();
       }
       break;
 
     case PHASE_STATUS:
-      updateStatusPulse();
+      if (!effectActive) updateStatusPulse();
       if (checkStatusComplete()) {
         transitionToAgenda();
       }
       break;
 
     case PHASE_AGENDA:
-      updateAgendaPulse();
+      if (!effectActive) updateAgendaPulse();
       break;
   }
 }
