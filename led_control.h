@@ -171,37 +171,76 @@ static void tickPulse(uint32_t elapsed) {
   fill_solid(leds, NUM_LEDS, CHSV(hue, 200, val));
 }
 
-// Spiral path: center outward, each ring traversed clockwise before stepping out.
-// Ring boundaries: [0]=center, [1-6]=ring1, [7-18]=ring2, [19-36]=ring3, [37-60]=ring4.
-// Every adjacent pair is verified as a neighbor in HEX_NEIGHBORS.
-static const uint8_t SPIRAL_PATH[61] = {
-  30,                                                             // ring 0
-  29, 39, 38, 31, 21, 22,                                        // ring 1
-  13, 23, 28, 40, 45, 46, 47, 37, 32, 20, 15, 14,               // ring 2
-   8,  9, 12, 24, 27, 41, 44, 54, 53, 52, 51, 48, 36, 33, 19, 16,  6,  7,  // ring 3
-   3,  2,  1,  0, 10, 11, 25, 26, 42, 43, 55, 56, 57, 58, 59, 60, 50, 49, 35, 34, 18, 17,  5,  4  // ring 4
+// Hex grid coordinates relative to center (hex 30).
+// HEX_Y2 = visual_y × 2 so all values are integers; center = 8.
+// Column x-spacing = sqrt(3)/2 row spacing → scale cols by 1.732 vs rows.
+static const uint8_t HEX_COL[61] = {
+  0,0,0,0,0,
+  1,1,1,1,1,1,
+  2,2,2,2,2,2,2,
+  3,3,3,3,3,3,3,3,
+  4,4,4,4,4,4,4,4,4,
+  5,5,5,5,5,5,5,5,
+  6,6,6,6,6,6,6,
+  7,7,7,7,7,7,
+  8,8,8,8,8
+};
+static const uint8_t HEX_Y2[61] = {
+   4, 6, 8,10,12,
+  13,11, 9, 7, 5, 3,
+   2, 4, 6, 8,10,12,14,
+  15,13,11, 9, 7, 5, 3, 1,
+   0, 2, 4, 6, 8,10,12,14,16,
+  15,13,11, 9, 7, 5, 3, 1,
+   2, 4, 6, 8,10,12,14,
+  13,11, 9, 7, 5, 3,
+   4, 6, 8,10,12
 };
 
-static const int SPIRAL_TAIL = 14;   // hexes in the fading tail
-static const int SPIRAL_STEP_MS = 70; // ms per hex advance (~4.3s per full loop)
+// Radar cache — computed once per boot, reused every tick.
+static float   s_radarAngle[61];  // clockwise degrees from top, 0–360
+static uint8_t s_radarHue[61];    // hue keyed to distance from center (red→violet)
+static bool    s_radarReady = false;
+
+static void initRadarCache() {
+  if (s_radarReady) return;
+  for (int i = 0; i < 61; i++) {
+    float dx   = (HEX_COL[i] - 4) * 1.732f;
+    float dy   = (float)(HEX_Y2[i] - 8);
+    float dist = sqrtf(dx * dx + dy * dy);
+    if (dist < 0.01f) {
+      s_radarAngle[i] = 0.0f;
+      s_radarHue[i]   = 0;
+    } else {
+      float a = atan2f(dx, -dy) * (180.0f / (float)M_PI);
+      if (a < 0.0f) a += 360.0f;
+      s_radarAngle[i] = a;
+      s_radarHue[i]   = (uint8_t)(dist / 8.0f * 210.0f);  // red(0) inner → blue-violet(210) outer
+    }
+  }
+  s_radarReady = true;
+}
 
 static void tickSpiral(uint32_t elapsed) {
-  int   head    = (int)(elapsed / SPIRAL_STEP_MS) % 61;
-  uint8_t hue   = (uint8_t)(elapsed / 400);
+  initRadarCache();
 
-  bool painted[NUM_HEXES] = {};
+  // One full rotation every 3 seconds
+  float sweep = fmodf((float)elapsed * (360.0f / 3000.0f), 360.0f);
+  const float TRAIL = 110.0f;  // degrees of fading trail behind the arm
 
-  for (int i = 0; i < SPIRAL_TAIL; i++) {
-    int     idx  = ((head - i) + 61) % 61;
-    uint8_t hex  = SPIRAL_PATH[idx];
-    uint8_t bri  = (i == 0) ? 255 : (uint8_t)(255 * (SPIRAL_TAIL - i) / SPIRAL_TAIL);
-    setHexColor(hex, CHSV(hue + (uint8_t)(i * 6), 220, bri));
-    painted[hex] = true;
-  }
-
-  // Explicitly black unpainted hexes — no FastLED.clear() needed
   for (int i = 0; i < NUM_HEXES; i++) {
-    if (!painted[i]) setHexColor(i, CRGB::Black);
+    if (i == 30) {                            // center always lit at inner hue
+      setHexColor(30, CHSV(0, 220, 200));
+      continue;
+    }
+    float behind = fmodf(sweep - s_radarAngle[i] + 360.0f, 360.0f);
+    if (behind > TRAIL) {
+      setHexColor(i, CRGB::Black);
+    } else {
+      float   t = 1.0f - behind / TRAIL;
+      uint8_t b = (uint8_t)(255.0f * t * t);  // quadratic fade
+      setHexColor(i, CHSV(s_radarHue[i], 240, b));
+    }
   }
 }
 
