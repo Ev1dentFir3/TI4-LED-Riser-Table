@@ -54,7 +54,7 @@
 #endif
 
 #define HTTP_PORT       80
-#define BROADCAST_MS    100   // browser polls /poll at this interval (ms)
+#define BROADCAST_MS    33    // ~30fps WebSocket push to browser
 
 // -----------------------------------------------------------------------------
 // Debug / Test Flags
