@@ -2,7 +2,7 @@
 
 // =============================================================================
 // TI4 Hex Riser - Configuration
-// Target: ESP32-DOWP-V3
+// Target: ESP32-S3-WROOM-1-N16R8
 // =============================================================================
 // Edit this file to change pin assignments, WiFi credentials, and debug flags.
 // All hardware-specific settings live here so nothing else needs editing.
@@ -31,7 +31,7 @@
 #define DEFAULT_BRIGHTNESS  128    // 50% — ~27.5 A draw; safe for 60 A PSU
 #define MAX_BRIGHTNESS      200    // Hard cap; raise carefully
 #define LED_COLOR_ORDER     GRB    // SK6812 RGB channel order
-#define LED_UPDATE_MS       16     // ~60 FPS
+#define LED_UPDATE_MS       8     // ~60 FPS
 #define SIDE_GAP            4      // Side line inset (px); higher = more gap between hex colors
 
 // -----------------------------------------------------------------------------

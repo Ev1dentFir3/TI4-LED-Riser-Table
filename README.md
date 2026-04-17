@@ -1,12 +1,15 @@
 # TI4 Hex Riser Firmware
 
-ESP32 firmware for a 61-hex Twilight Imperium 4 LED riser table. Dual-core architecture: Core 0 handles the LED strip and HTTP server, Core 1 runs the game state machine, keyboard polling, and serial commands.
+ESP32-S3 firmware for a 61-hex Twilight Imperium 4 LED riser table. Dual-core architecture: Core 0 runs the LED strip task (I2S driver, ~60 fps), Core 1 runs the game state machine, keyboard polling, serial commands, and AsyncWebServer.
 
 ## Hardware
 
 | Component | Spec |
 |---|---|
-| MCU | ESP32-DOWP-V3 (ESP32 Dev Module) |
+| MCU | ESP32-S3-WROOM-1-N16R8 (Lonely Binary Gold Edition) |
+| CPU | Dual-core Xtensa LX7 @ 240 MHz |
+| Flash | 16 MB QSPI |
+| PSRAM | 8 MB Octal SPI |
 | LEDs | 915x SK6812 RGBW, GPIO 13 |
 | Keyboard I2C | MCP23017 x4, GPIO 21 (SDA) / 22 (SCL) |
 | Power | 5V 60A PSU |
@@ -27,22 +30,40 @@ Install manually from GitHub:
 | ESPAsyncWebServer | me-no-dev/ESPAsyncWebServer | Async HTTP + WebSocket server |
 | AsyncTCP | me-no-dev/AsyncTCP | Required dependency for ESPAsyncWebServer |
 
+## Driver
+
+The board uses a **CH343 USB-to-UART bridge**. If your serial port isn't detected, install the official driver:
+- **Windows:** https://www.wch-ic.com/downloads/CH343SER_EXE.html
+- **macOS:** https://www.wch-ic.com/downloads/CH34XSER_MAC_ZIP.html
+- **Linux:** Built-in kernel support (4.x+)
+
 ## Upload Steps
 
 1. Open `TI4_HexRiser.ino` in Arduino IDE
 2. Install all libraries above
-3. Select **Tools > Board > ESP32 Arduino > ESP32 Dev Module**
-4. Set **Tools > CPU Frequency > 240 MHz**
-5. Set **Tools > Partition Scheme > Default 4MB with spiffs**
-6. Select **Tools > Port > your COM port**
-7. Click **Upload**
+3. Select **Tools > Board > ESP32 Arduino > ESP32S3 Dev Module**
+4. Apply these board settings:
+
+| Setting | Value |
+|---|---|
+| USB CDC On Boot | Enabled |
+| CPU Frequency | 240MHz (WiFi) |
+| Flash Mode | QIO 80MHz |
+| Flash Size | 16MB (128Mb) |
+| Partition Scheme | 16M Flash (3MB APP/9.9MB FATFS) |
+| PSRAM | OPI PSRAM |
+| Upload Speed | 921600 |
+| USB Mode | Hardware CDC and JTAG |
+
+5. Select **Tools > Port > your COM port**
+6. Click **Upload**
 
 ## Core Architecture
 
 | Core | Responsibility |
 |---|---|
-| Core 0 | LED task (~60 fps via RMT), AsyncWebServer HTTP/WebSocket handlers |
-| Core 1 | `loop()`: game state machine, keyboard polling, serial command handler |
+| Core 0 | LED task (~60 fps via I2S) — timing-critical, isolated from WiFi jitter |
+| Core 1 | `loop()`: game state machine, keyboard polling, serial command handler; AsyncWebServer |
 
 The LED task runs independently at ~60 fps. Game state writes to shared `hexColor[]` directly; the LED task picks up changes within one frame (~16ms) with no explicit sync needed.
 
@@ -223,12 +244,12 @@ Where `base = hex_index * 15`. Hex 30 is the center hex.
 ## Wiring Reference
 
 ```
-ESP32-DOWP-V3             SK6812 strip
+ESP32-S3-WROOM-1          SK6812 strip
 GPIO 13 ─────────────── DIN (LED 0 end)
 GND     ─────────────── GND
                          5V from external PSU
 
-ESP32-DOWP-V3             MCP23017 (x4)
+ESP32-S3-WROOM-1          MCP23017 (x4)
 GPIO 21 (SDA) ────────── SDA
 GPIO 22 (SCL) ────────── SCL
 3.3V ─────────────────── VCC
@@ -246,16 +267,22 @@ GND ──────────────────── GND
 
 ## Troubleshooting
 
-**LEDs don't light:** Check GPIO 13 data wire, confirm PSU is powered, verify shared GND between PSU and ESP32. GPIO 6-11 are reserved for flash on ESP32-WROOM — do not use them for LED data.
+**Serial port not detected:** Install the CH343 driver from WCH (see Driver section above). Use the UART USB-C port, not the data port.
 
-**Web page won't load:** Confirm you are connected to the correct WiFi; check Serial Monitor for the IP address
+**LEDs don't light:** Check GPIO 13 data wire, confirm PSU is powered, verify shared GND between PSU and ESP32-S3. On ESP32-S3, avoid GPIO 0, 45, 46 (strapping pins) for LED data — GPIO 13 is safe.
+
+**Web page won't load:** Confirm you are connected to the correct WiFi; check Serial Monitor for the IP address.
 
 **WebSocket not connecting:** Hard-refresh the browser (Ctrl+Shift+R). If the board rebooted, the WebSocket client reconnects automatically within a few seconds.
 
-**Animation not showing in browser:** Enable "Simulate Hardware" in Settings when testing without the strip connected -- FastLED.show() via RMT can interfere with timing when no strip is attached.
+**Animation not showing in browser:** Enable "Simulate Hardware" in Settings when testing without the strip connected.
 
-**Wrong colors:** Edit `LED_COLOR_ORDER` in `config.h` (try `GRB`, `RGB`, or `BGR`)
+**Compile error — FASTLED_USES_ESP32S3_I2S not defined:** The `#define FASTLED_USES_ESP32S3_I2S` line in `TI4_HexRiser.ino` must appear before `#include "led_control.h"`. Do not move or remove it — the ESP32-S3 I2S driver is required for FastLED to work on this chip.
+
+**Wrong colors:** Edit `LED_COLOR_ORDER` in `config.h` (try `GRB`, `RGB`, or `BGR`).
 
 **Compile errors — ESPAsyncWebServer:** This library must be installed manually from GitHub (me-no-dev/ESPAsyncWebServer and me-no-dev/AsyncTCP). It is not available in the Arduino Library Manager.
 
 **Watchdog reset / core panic:** If the LED task triggers a watchdog, increase the `vTaskDelay` in `ledTask()` or reduce `LED_UPDATE_MS` in `config.h`.
+
+**PSRAM not detected:** Confirm **Tools > PSRAM > OPI PSRAM** is selected in Arduino IDE. The N16R8 module has 8MB Octal SPI PSRAM — if disabled, large buffers may cause heap exhaustion.

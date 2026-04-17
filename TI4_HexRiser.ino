@@ -1,6 +1,6 @@
 // =============================================================================
 // TI4 Hex Riser - Main Firmware
-// Target: ESP32-DOWP-V3
+// Target: ESP32-S3-WROOM-1-N16R8
 //
 // Required libraries (Arduino IDE -> Library Manager):
 //   1. FastLED              (by Daniel Garcia)
@@ -8,13 +8,13 @@
 //   3. ESPAsyncWebServer    (GitHub: me-no-dev/ESPAsyncWebServer)
 //   4. AsyncTCP             (GitHub: me-no-dev/AsyncTCP)
 //
-// Board: ESP32 Dev Module
-// CPU: 240 MHz, Flash: 4MB, Partition: Default 4MB with spiffs
+// Board: ESP32S3 Dev Module
+// CPU: 240 MHz (WiFi), Flash: 16MB QIO 80MHz, Partition: 16M Flash (3MB APP/9.9MB FATFS)
+// PSRAM: OPI PSRAM, USB CDC On Boot: Enabled, USB Mode: Hardware CDC and JTAG
 //
 // Core assignment:
-//   Core 0 — LED task (FastLED.show via RMT, ~60 fps)
-//   Core 1 — loop(): game state, keyboard, serial commands
-//             AsyncWebServer handles HTTP in background on Core 0
+//   Core 0 — LED task (FastLED.show via I2S, ~60 fps) — isolated from WiFi jitter
+//   Core 1 — loop(): game state, keyboard, serial commands; AsyncWebServer runs here
 // =============================================================================
 
 #include "config.h"
@@ -22,6 +22,8 @@
 
 #include "led_map.h"
 #include "hex_neighbors.h"
+// ESP32-S3 requires I2S peripheral for FastLED — must be defined before the include
+#define FASTLED_USES_ESP32S3_I2S
 #include "led_control.h"
 #include "keyboard_control.h"
 #include "animations.h"
@@ -222,7 +224,7 @@ void setup() {
   if (rtCfg.debugSerial) {
     Serial.println();
     Serial.println(F("=============================="));
-    Serial.println(F(" TI4 Hex Riser v2.0 - ESP32"));
+    Serial.println(F(" TI4 Hex Riser v2.0 - ESP32-S3"));
     Serial.println(F("=============================="));
   }
 
