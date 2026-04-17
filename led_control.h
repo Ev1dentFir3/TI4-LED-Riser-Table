@@ -33,6 +33,7 @@ enum AnimEffect {
   ANIM_SPIRAL  = 3,
   ANIM_SPARKLE = 4,
   ANIM_WAVE    = 5,
+  ANIM_RIPPLE  = 6,
 };
 
 static AnimEffect currentEffect      = ANIM_NONE;
@@ -269,6 +270,36 @@ static void tickWave(uint32_t elapsed) {
   }
 }
 
+static const uint8_t RIPPLE_RINGS[5][24] = {
+  {30,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255},
+  {29,31,21,22,38,39,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255},
+  {28,23,40,32,20,37,14,15,13,46,47,45,255,255,255,255,255,255,255,255,255,255,255,255},
+  {27,24,41,12,44,33,19,36,16,48,8,7,6,9,53,52,51,54,255,255,255,255,255,255},
+  {0,1,2,3,4,5,10,11,17,18,25,26,34,35,42,43,49,50,55,56,57,58,59,60},
+};
+
+static void tickRipple(uint32_t elapsed) {
+  uint32_t ringMs    = 350;
+  int      activeRing = (int)(elapsed / ringMs);
+  if (activeRing > 4) activeRing = 4;
+
+  uint8_t hue = (elapsed / 10) & 0xFF;
+
+  bool inRing[NUM_HEXES] = {};
+  for (int r = 0; r <= activeRing; r++) {
+    CRGB color = CHSV(hue + r * 40, 255, 200);
+    for (int e = 0; e < 24; e++) {
+      uint8_t h = RIPPLE_RINGS[r][e];
+      if (h == 255) break;
+      setHexColor(h, color);
+      inRing[h] = true;
+    }
+  }
+  for (int i = 0; i < NUM_HEXES; i++) {
+    if (!inRing[i]) setHexColor(i, CRGB::Black);
+  }
+}
+
 static void tickEffect() {
   if (currentEffect == ANIM_NONE) return;
   uint32_t elapsed = millis() - animStartMs;
@@ -278,6 +309,7 @@ static void tickEffect() {
     case ANIM_SPIRAL:  tickSpiral(elapsed);  break;
     case ANIM_SPARKLE: tickSparkle(elapsed); break;
     case ANIM_WAVE:    tickWave(elapsed);    break;
+    case ANIM_RIPPLE:  tickRipple(elapsed);  break;
     default: break;
   }
 }

@@ -17,6 +17,9 @@
 //   Core 1 — loop(): game state, keyboard, serial commands; AsyncWebServer runs here
 // =============================================================================
 
+#define BOARD_HAS_PSRAM
+#define CONFIG_SPIRAM_CACHE_WORKAROUND
+
 #include "config.h"
 #include "runtime_settings.h"
 
@@ -161,10 +164,11 @@ void handleSerialCommand() {
     if      (effectName == "RAINBOW") startEffect(ANIM_RAINBOW);
     else if (effectName == "PULSE")   startEffect(ANIM_PULSE);
     else if (effectName == "SPIRAL")  startEffect(ANIM_SPIRAL);
+    else if (effectName == "RIPPLE")  startEffect(ANIM_RIPPLE);
     else if (effectName == "SPARKLE") startEffect(ANIM_SPARKLE);
     else if (effectName == "WAVE")    startEffect(ANIM_WAVE);
     else if (effectName == "NONE")    stopEffect();
-    else Serial.println(F("Unknown effect. Try: rainbow pulse spiral sparkle wave none"));
+    else Serial.println(F("Unknown effect. Try: rainbow pulse spiral ripple sparkle wave none"));
 
   // --- bright N ---
   } else if (line.startsWith("bright ")) {
