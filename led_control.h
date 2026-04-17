@@ -171,29 +171,37 @@ static void tickPulse(uint32_t elapsed) {
   fill_solid(leds, NUM_LEDS, CHSV(hue, 200, val));
 }
 
-static const uint8_t SPIRAL_RINGS[5][24] = {
-  {30,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255},
-  {29,31,21,22,38,39,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255},
-  {28,23,40,32,20,37,14,15,13,46,47,45,255,255,255,255,255,255,255,255,255,255,255,255},
-  {27,24,41,12,44,33,19,36,16,48,8,7,6,9,53,52,51,54,255,255,255,255,255,255},
-  {0,1,2,3,4,5,10,11,17,18,25,26,34,35,42,43,49,50,55,56,57,58,59,60},
+// Spiral path: center outward, each ring traversed clockwise before stepping out.
+// Ring boundaries: [0]=center, [1-6]=ring1, [7-18]=ring2, [19-36]=ring3, [37-60]=ring4.
+// Every adjacent pair is verified as a neighbor in HEX_NEIGHBORS.
+static const uint8_t SPIRAL_PATH[61] = {
+  30,                                                             // ring 0
+  29, 39, 38, 31, 21, 22,                                        // ring 1
+  13, 23, 28, 40, 45, 46, 47, 37, 32, 20, 15, 14,               // ring 2
+   8,  9, 12, 24, 27, 41, 44, 54, 53, 52, 51, 48, 36, 33, 19, 16,  6,  7,  // ring 3
+   3,  2,  1,  0, 10, 11, 25, 26, 42, 43, 55, 56, 57, 58, 59, 60, 50, 49, 35, 34, 18, 17,  5,  4  // ring 4
 };
 
+static const int SPIRAL_TAIL = 14;   // hexes in the fading tail
+static const int SPIRAL_STEP_MS = 70; // ms per hex advance (~4.3s per full loop)
+
 static void tickSpiral(uint32_t elapsed) {
-  uint32_t ringMs = 350;
-  int activeRing  = (int)(elapsed / ringMs);
-  if (activeRing > 4) activeRing = 4;
+  int   head    = (int)(elapsed / SPIRAL_STEP_MS) % 61;
+  uint8_t hue   = (uint8_t)(elapsed / 400);
 
-  uint8_t hue = (elapsed / 10) & 0xFF;
-  FastLED.clear();
+  bool painted[NUM_HEXES] = {};
 
-  for (int ringIdx = 0; ringIdx <= activeRing && ringIdx < 5; ringIdx++) {
-    CRGB color = CHSV(hue + ringIdx * 40, 255, 200);
-    for (int entryIdx = 0; entryIdx < 24; entryIdx++) {
-      uint8_t hexIdx = SPIRAL_RINGS[ringIdx][entryIdx];
-      if (hexIdx == 255) break;
-      setHexColor(hexIdx, color);
-    }
+  for (int i = 0; i < SPIRAL_TAIL; i++) {
+    int     idx  = ((head - i) + 61) % 61;
+    uint8_t hex  = SPIRAL_PATH[idx];
+    uint8_t bri  = (i == 0) ? 255 : (uint8_t)(255 * (SPIRAL_TAIL - i) / SPIRAL_TAIL);
+    setHexColor(hex, CHSV(hue + (uint8_t)(i * 6), 220, bri));
+    painted[hex] = true;
+  }
+
+  // Explicitly black unpainted hexes — no FastLED.clear() needed
+  for (int i = 0; i < NUM_HEXES; i++) {
+    if (!painted[i]) setHexColor(i, CRGB::Black);
   }
 }
 
