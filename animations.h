@@ -49,11 +49,11 @@ void runBootAnimation() {
 }
 
 // -----------------------------------------------------------------------------
-// Center-out pulse: reuses the SPIRAL effect for ~1.8 s then stops.
+// Center-out pulse: reuses the RIPPLE effect for ~1.8 s then stops.
 // Used as the transition animation between strategy -> action and other phases.
 // -----------------------------------------------------------------------------
 void runCenterOutPulse() {
-  startEffect(ANIM_SPIRAL);
+  startEffect(ANIM_RIPPLE);
   uint32_t startMs = millis();
   while (millis() - startMs < 1800) {
     updateLEDs();

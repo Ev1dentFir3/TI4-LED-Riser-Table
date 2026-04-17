@@ -39,6 +39,7 @@ enum AnimEffect {
 static AnimEffect currentEffect      = ANIM_NONE;
 static uint32_t   animStartMs        = 0;
 static uint32_t   lastLEDUpdate      = 0;
+static bool       s_lifeSeeded       = false;
 
 // Snapshot saved when an effect starts; restored when stopped.
 // Lets effects temporarily hijack the LEDs without touching game state.
@@ -207,8 +208,7 @@ static const uint8_t HEX_Y2[61] = {
 static uint8_t s_lifeHue[NUM_HEXES];   // distance-based hue, computed once
 static bool    s_lifeCells[NUM_HEXES];
 static bool    s_lifeNext[NUM_HEXES];
-static bool    s_lifeHueReady = false;
-static bool    s_lifeSeeded   = false;
+static bool    s_lifeHueReady  = false;
 static uint32_t s_lifeLastStep = 0;
 
 static const uint32_t LIFE_STEP_MS = 350;
@@ -255,7 +255,7 @@ static void tickLife(uint32_t elapsed) {
     s_lifeLastStep = elapsed;
   }
   for (int i = 0; i < NUM_HEXES; i++) {
-    setHexColor(i, s_lifeCells[i] ? CHSV(s_lifeHue[i], 240, 220) : CRGB::Black);
+    setHexColor(i, s_lifeCells[i] ? CRGB(CHSV(s_lifeHue[i], 240, 220)) : CRGB(CRGB::Black));
   }
 }
 

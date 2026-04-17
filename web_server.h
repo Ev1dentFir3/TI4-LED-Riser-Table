@@ -260,7 +260,8 @@ void parseWSCommand(const char* msg) {
     const char* name = msg + 7;
     if      (strcmp(name, "RAINBOW") == 0) startEffect(ANIM_RAINBOW);
     else if (strcmp(name, "PULSE")   == 0) startEffect(ANIM_PULSE);
-    else if (strcmp(name, "SPIRAL")  == 0) startEffect(ANIM_SPIRAL);
+    else if (strcmp(name, "LIFE")    == 0) startEffect(ANIM_LIFE);
+    else if (strcmp(name, "RIPPLE")  == 0) startEffect(ANIM_RIPPLE);
     else if (strcmp(name, "SPARKLE") == 0) startEffect(ANIM_SPARKLE);
     else if (strcmp(name, "WAVE")    == 0) startEffect(ANIM_WAVE);
     else if (strcmp(name, "NONE")    == 0) stopEffect();
