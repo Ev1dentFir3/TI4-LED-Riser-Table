@@ -30,7 +30,7 @@ enum AnimEffect {
   ANIM_NONE    = 0,
   ANIM_RAINBOW = 1,
   ANIM_PULSE   = 2,
-  ANIM_SPIRAL  = 3,
+  ANIM_LIFE    = 3,
   ANIM_SPARKLE = 4,
   ANIM_WAVE    = 5,
   ANIM_RIPPLE  = 6,
@@ -135,8 +135,9 @@ void startEffect(AnimEffect effect) {
     memcpy(hexColorSnapshot, hexColor, sizeof(hexColor));
     effectSnapshotValid = true;
   }
-  currentEffect = effect;
-  animStartMs   = millis();
+  currentEffect  = effect;
+  animStartMs    = millis();
+  s_lifeSeeded   = false;
 }
 
 void stopEffect() {
@@ -198,50 +199,63 @@ static const uint8_t HEX_Y2[61] = {
    4, 6, 8,10,12
 };
 
-// Radar cache — computed once per boot, reused every tick.
-static float   s_radarAngle[61];  // clockwise degrees from top, 0–360
-static uint8_t s_radarHue[61];    // hue keyed to distance from center (red→violet)
-static bool    s_radarReady = false;
+// Game of Life — distance-based hue, hex neighbor rules.
+// Rules: B2 / S3-4  (born with 2 live neighbors; survives with 3 or 4).
+// Hue is fixed per-hex by distance from center (red inner → violet outer).
+// Reseeds automatically when population collapses below 4 live cells.
 
-static void initRadarCache() {
-  if (s_radarReady) return;
-  for (int i = 0; i < 61; i++) {
+static uint8_t s_lifeHue[NUM_HEXES];   // distance-based hue, computed once
+static bool    s_lifeCells[NUM_HEXES];
+static bool    s_lifeNext[NUM_HEXES];
+static bool    s_lifeHueReady = false;
+static bool    s_lifeSeeded   = false;
+static uint32_t s_lifeLastStep = 0;
+
+static const uint32_t LIFE_STEP_MS = 350;
+
+static void initLifeHue() {
+  if (s_lifeHueReady) return;
+  for (int i = 0; i < NUM_HEXES; i++) {
     float dx   = (HEX_COL[i] - 4) * 1.732f;
     float dy   = (float)(HEX_Y2[i] - 8);
     float dist = sqrtf(dx * dx + dy * dy);
-    if (dist < 0.01f) {
-      s_radarAngle[i] = 0.0f;
-      s_radarHue[i]   = 0;
-    } else {
-      float a = atan2f(dx, -dy) * (180.0f / (float)M_PI);
-      if (a < 0.0f) a += 360.0f;
-      s_radarAngle[i] = a;
-      s_radarHue[i]   = (uint8_t)(dist / 8.0f * 210.0f);  // red(0) inner → blue-violet(210) outer
-    }
+    s_lifeHue[i] = (uint8_t)(dist / 8.0f * 210.0f);  // red(0) inner → violet(210) outer
   }
-  s_radarReady = true;
+  s_lifeHueReady = true;
 }
 
-static void tickSpiral(uint32_t elapsed) {
-  initRadarCache();
+static void seedLife() {
+  for (int i = 0; i < NUM_HEXES; i++) s_lifeCells[i] = (random8() < 128);
+}
 
-  // One full rotation every 3 seconds
-  float sweep = fmodf((float)elapsed * (360.0f / 3000.0f), 360.0f);
-  const float TRAIL = 110.0f;  // degrees of fading trail behind the arm
-
+static void stepLife() {
+  int living = 0;
   for (int i = 0; i < NUM_HEXES; i++) {
-    if (i == 30) {                            // center always lit at inner hue
-      setHexColor(30, CHSV(0, 220, 200));
-      continue;
+    int n = 0;
+    for (int d = 0; d < 6; d++) {
+      int nb = HEX_NEIGHBORS[i][d];
+      if (nb >= 0 && s_lifeCells[nb]) n++;
     }
-    float behind = fmodf(sweep - s_radarAngle[i] + 360.0f, 360.0f);
-    if (behind > TRAIL) {
-      setHexColor(i, CRGB::Black);
-    } else {
-      float   t = 1.0f - behind / TRAIL;
-      uint8_t b = (uint8_t)(255.0f * t * t);  // quadratic fade
-      setHexColor(i, CHSV(s_radarHue[i], 240, b));
-    }
+    s_lifeNext[i] = s_lifeCells[i] ? (n >= 3 && n <= 4) : (n == 2);
+    if (s_lifeNext[i]) living++;
+  }
+  if (living < 4) seedLife();  // reseed on collapse
+  else memcpy(s_lifeCells, s_lifeNext, sizeof(s_lifeCells));
+}
+
+static void tickLife(uint32_t elapsed) {
+  initLifeHue();
+  if (!s_lifeSeeded) {
+    seedLife();
+    s_lifeSeeded   = true;
+    s_lifeLastStep = elapsed;
+  }
+  if (elapsed - s_lifeLastStep >= LIFE_STEP_MS) {
+    stepLife();
+    s_lifeLastStep = elapsed;
+  }
+  for (int i = 0; i < NUM_HEXES; i++) {
+    setHexColor(i, s_lifeCells[i] ? CHSV(s_lifeHue[i], 240, 220) : CRGB::Black);
   }
 }
 
@@ -306,7 +320,7 @@ static void tickEffect() {
   switch (currentEffect) {
     case ANIM_RAINBOW: tickRainbow(elapsed); break;
     case ANIM_PULSE:   tickPulse(elapsed);   break;
-    case ANIM_SPIRAL:  tickSpiral(elapsed);  break;
+    case ANIM_LIFE:    tickLife(elapsed);    break;
     case ANIM_SPARKLE: tickSparkle(elapsed); break;
     case ANIM_WAVE:    tickWave(elapsed);    break;
     case ANIM_RIPPLE:  tickRipple(elapsed);  break;

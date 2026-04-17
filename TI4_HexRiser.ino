@@ -163,12 +163,12 @@ void handleSerialCommand() {
     effectName.toUpperCase();
     if      (effectName == "RAINBOW") startEffect(ANIM_RAINBOW);
     else if (effectName == "PULSE")   startEffect(ANIM_PULSE);
-    else if (effectName == "SPIRAL")  startEffect(ANIM_SPIRAL);
+    else if (effectName == "LIFE")    startEffect(ANIM_LIFE);
     else if (effectName == "RIPPLE")  startEffect(ANIM_RIPPLE);
     else if (effectName == "SPARKLE") startEffect(ANIM_SPARKLE);
     else if (effectName == "WAVE")    startEffect(ANIM_WAVE);
     else if (effectName == "NONE")    stopEffect();
-    else Serial.println(F("Unknown effect. Try: rainbow pulse spiral ripple sparkle wave none"));
+    else Serial.println(F("Unknown effect. Try: rainbow pulse life ripple sparkle wave none"));
 
   // --- bright N ---
   } else if (line.startsWith("bright ")) {
