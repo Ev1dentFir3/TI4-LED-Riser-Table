@@ -200,18 +200,23 @@ static const uint8_t HEX_Y2[61] = {
    4, 6, 8,10,12
 };
 
-// Game of Life — distance-based hue, hex neighbor rules.
-// Rules: B2 / S3-4  (born with 2 live neighbors; survives with 3 or 4).
-// Hue is fixed per-hex by distance from center (red inner → violet outer).
-// Reseeds automatically when population collapses below 4 live cells.
+// Game of Life on hex sides — 366 cells (61 hexes × 6 sides each).
+// Rules: B2 / S2-3  (born with 2 live neighbors; survives with 2 or 3).
+// Each side has up to 5 neighbors:
+//   • 2 adjacent sides on the same hex (clockwise / counter-clockwise)
+//   • 3 sides on the hex across the shared edge: mirrored side ± its two adjacent
+// Hue = distance-from-center (red inner → violet outer) + small per-direction
+// offset so sides within the same hex have a subtle color gradient.
 
-static uint8_t s_lifeHue[NUM_HEXES];   // distance-based hue, computed once
-static bool    s_lifeCells[NUM_HEXES];
-static bool    s_lifeNext[NUM_HEXES];
-static bool    s_lifeHueReady  = false;
+static const int LIFE_CELLS = NUM_HEXES * 6;  // 366
+
+static uint8_t  s_lifeHue[NUM_HEXES];
+static bool     s_lifeCells[LIFE_CELLS];
+static bool     s_lifeNext[LIFE_CELLS];
+static bool     s_lifeHueReady = false;
 static uint32_t s_lifeLastStep = 0;
 
-static const uint32_t LIFE_STEP_MS = 350;
+static const uint32_t LIFE_STEP_MS = 300;
 
 static void initLifeHue() {
   if (s_lifeHueReady) return;
@@ -219,27 +224,39 @@ static void initLifeHue() {
     float dx   = (HEX_COL[i] - 4) * 1.732f;
     float dy   = (float)(HEX_Y2[i] - 8);
     float dist = sqrtf(dx * dx + dy * dy);
-    s_lifeHue[i] = (uint8_t)(dist / 8.0f * 210.0f);  // red(0) inner → violet(210) outer
+    s_lifeHue[i] = (uint8_t)(dist / 8.0f * 210.0f);
   }
   s_lifeHueReady = true;
 }
 
 static void seedLife() {
-  for (int i = 0; i < NUM_HEXES; i++) s_lifeCells[i] = (random8() < 128);
+  for (int i = 0; i < LIFE_CELLS; i++) s_lifeCells[i] = (random8() < 128);
 }
 
 static void stepLife() {
   int living = 0;
-  for (int i = 0; i < NUM_HEXES; i++) {
+  for (int cell = 0; cell < LIFE_CELLS; cell++) {
+    int h = cell / 6;
+    int d = cell % 6;
     int n = 0;
-    for (int d = 0; d < 6; d++) {
-      int nb = HEX_NEIGHBORS[i][d];
-      if (nb >= 0 && s_lifeCells[nb]) n++;
+
+    // Same-hex adjacent sides
+    if (s_lifeCells[h * 6 + (d + 1) % 6]) n++;
+    if (s_lifeCells[h * 6 + (d + 5) % 6]) n++;
+
+    // Three sides on the neighboring hex across the shared edge
+    int nb = HEX_NEIGHBORS[h][d];
+    if (nb >= 0) {
+      int m = (d + 3) % 6;          // mirrored direction on neighbor
+      if (s_lifeCells[nb * 6 + m])           n++;
+      if (s_lifeCells[nb * 6 + (m + 1) % 6]) n++;
+      if (s_lifeCells[nb * 6 + (m + 5) % 6]) n++;
     }
-    s_lifeNext[i] = s_lifeCells[i] ? (n >= 3 && n <= 4) : (n == 2);
-    if (s_lifeNext[i]) living++;
+
+    s_lifeNext[cell] = s_lifeCells[cell] ? (n >= 2 && n <= 3) : (n == 2);
+    if (s_lifeNext[cell]) living++;
   }
-  if (living < 4) seedLife();  // reseed on collapse
+  if (living < 12) seedLife();
   else memcpy(s_lifeCells, s_lifeNext, sizeof(s_lifeCells));
 }
 
@@ -254,8 +271,15 @@ static void tickLife(uint32_t elapsed) {
     stepLife();
     s_lifeLastStep = elapsed;
   }
-  for (int i = 0; i < NUM_HEXES; i++) {
-    setHexColor(i, s_lifeCells[i] ? CRGB(CHSV(s_lifeHue[i], 240, 220)) : CRGB(CRGB::Black));
+  for (int h = 0; h < NUM_HEXES; h++) {
+    for (int d = 0; d < 6; d++) {
+      if (s_lifeCells[h * 6 + d]) {
+        uint8_t hue = s_lifeHue[h] + (uint8_t)(d * 8);
+        setHexSideColor(h, d, CRGB(CHSV(hue, 240, 220)));
+      } else {
+        setHexSideColor(h, d, CRGB::Black);
+      }
+    }
   }
 }
 
