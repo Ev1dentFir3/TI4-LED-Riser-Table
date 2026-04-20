@@ -158,7 +158,6 @@ button.dim:hover { color: #8899aa; }
     <div class="fx-grid">
       <button id="fx-RAINBOW" onclick="fx('RAINBOW')">Rainbow</button>
       <button id="fx-PULSE"   onclick="fx('PULSE')">Pulse</button>
-      <button id="fx-LIFE"    onclick="fx('LIFE')">Life</button>
       <button id="fx-RIPPLE"  onclick="fx('RIPPLE')">Ripple</button>
       <button id="fx-SPARKLE" onclick="fx('SPARKLE')">Sparkle</button>
       <button id="fx-WAVE"    onclick="fx('WAVE')">Wave</button>
@@ -538,7 +537,7 @@ brightnessSlider.addEventListener('input', function () {
 // Effect button highlight — purely cosmetic, no local animation
 // ============================================================
 function setActiveFxBtn(name) {
-  ['RAINBOW','PULSE','LIFE','RIPPLE','SPARKLE','WAVE'].forEach(function (n) {
+  ['RAINBOW','PULSE','RIPPLE','SPARKLE','WAVE'].forEach(function (n) {
     var el = document.getElementById('fx-' + n);
     if (el) el.classList.toggle('active-fx', n === name);
   });

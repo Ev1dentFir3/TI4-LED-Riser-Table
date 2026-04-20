@@ -30,16 +30,14 @@ enum AnimEffect {
   ANIM_NONE    = 0,
   ANIM_RAINBOW = 1,
   ANIM_PULSE   = 2,
-  ANIM_LIFE    = 3,
-  ANIM_SPARKLE = 4,
-  ANIM_WAVE    = 5,
-  ANIM_RIPPLE  = 6,
+  ANIM_SPARKLE = 3,
+  ANIM_WAVE    = 4,
+  ANIM_RIPPLE  = 5,
 };
 
 static AnimEffect currentEffect      = ANIM_NONE;
 static uint32_t   animStartMs        = 0;
 static uint32_t   lastLEDUpdate      = 0;
-static bool       s_lifeSeeded       = false;
 
 // Snapshot saved when an effect starts; restored when stopped.
 // Lets effects temporarily hijack the LEDs without touching game state.
@@ -138,7 +136,6 @@ void startEffect(AnimEffect effect) {
   }
   currentEffect  = effect;
   animStartMs    = millis();
-  s_lifeSeeded   = false;
 }
 
 void stopEffect() {
@@ -172,115 +169,6 @@ static void tickPulse(uint32_t elapsed) {
   uint8_t val = beatsin8(30, 40, 255);
   uint8_t hue = elapsed / 200;
   fill_solid(leds, NUM_LEDS, CHSV(hue, 200, val));
-}
-
-// Hex grid coordinates relative to center (hex 30).
-// HEX_Y2 = visual_y × 2 so all values are integers; center = 8.
-// Column x-spacing = sqrt(3)/2 row spacing → scale cols by 1.732 vs rows.
-static const uint8_t HEX_COL[61] = {
-  0,0,0,0,0,
-  1,1,1,1,1,1,
-  2,2,2,2,2,2,2,
-  3,3,3,3,3,3,3,3,
-  4,4,4,4,4,4,4,4,4,
-  5,5,5,5,5,5,5,5,
-  6,6,6,6,6,6,6,
-  7,7,7,7,7,7,
-  8,8,8,8,8
-};
-static const uint8_t HEX_Y2[61] = {
-   4, 6, 8,10,12,
-  13,11, 9, 7, 5, 3,
-   2, 4, 6, 8,10,12,14,
-  15,13,11, 9, 7, 5, 3, 1,
-   0, 2, 4, 6, 8,10,12,14,16,
-  15,13,11, 9, 7, 5, 3, 1,
-   2, 4, 6, 8,10,12,14,
-  13,11, 9, 7, 5, 3,
-   4, 6, 8,10,12
-};
-
-// Game of Life on hex sides — 366 cells (61 hexes × 6 sides each).
-// Rules: B2 / S2-3  (born with 2 live neighbors; survives with 2 or 3).
-// Each side has up to 5 neighbors:
-//   • 2 adjacent sides on the same hex (clockwise / counter-clockwise)
-//   • 3 sides on the hex across the shared edge: mirrored side ± its two adjacent
-// Hue = distance-from-center (red inner → violet outer) + small per-direction
-// offset so sides within the same hex have a subtle color gradient.
-
-static const int LIFE_CELLS = NUM_HEXES * 6;  // 366
-
-static uint8_t  s_lifeHue[NUM_HEXES];
-static bool     s_lifeCells[LIFE_CELLS];
-static bool     s_lifeNext[LIFE_CELLS];
-static bool     s_lifeHueReady = false;
-static uint32_t s_lifeLastStep = 0;
-
-static const uint32_t LIFE_STEP_MS = 300;
-
-static void initLifeHue() {
-  if (s_lifeHueReady) return;
-  for (int i = 0; i < NUM_HEXES; i++) {
-    float dx   = (HEX_COL[i] - 4) * 1.732f;
-    float dy   = (float)(HEX_Y2[i] - 8);
-    float dist = sqrtf(dx * dx + dy * dy);
-    s_lifeHue[i] = (uint8_t)(dist / 8.0f * 210.0f);
-  }
-  s_lifeHueReady = true;
-}
-
-static void seedLife() {
-  for (int i = 0; i < LIFE_CELLS; i++) s_lifeCells[i] = (random8() < 128);
-}
-
-static void stepLife() {
-  int living = 0;
-  for (int cell = 0; cell < LIFE_CELLS; cell++) {
-    int h = cell / 6;
-    int d = cell % 6;
-    int n = 0;
-
-    // Same-hex adjacent sides
-    if (s_lifeCells[h * 6 + (d + 1) % 6]) n++;
-    if (s_lifeCells[h * 6 + (d + 5) % 6]) n++;
-
-    // Three sides on the neighboring hex across the shared edge
-    int nb = HEX_NEIGHBORS[h][d];
-    if (nb >= 0) {
-      int m = (d + 3) % 6;          // mirrored direction on neighbor
-      if (s_lifeCells[nb * 6 + m])           n++;
-      if (s_lifeCells[nb * 6 + (m + 1) % 6]) n++;
-      if (s_lifeCells[nb * 6 + (m + 5) % 6]) n++;
-    }
-
-    s_lifeNext[cell] = s_lifeCells[cell] ? (n >= 2 && n <= 3) : (n == 2);
-    if (s_lifeNext[cell]) living++;
-  }
-  if (living < 12) seedLife();
-  else memcpy(s_lifeCells, s_lifeNext, sizeof(s_lifeCells));
-}
-
-static void tickLife(uint32_t elapsed) {
-  initLifeHue();
-  if (!s_lifeSeeded) {
-    seedLife();
-    s_lifeSeeded   = true;
-    s_lifeLastStep = elapsed;
-  }
-  if (elapsed - s_lifeLastStep >= LIFE_STEP_MS) {
-    stepLife();
-    s_lifeLastStep = elapsed;
-  }
-  for (int h = 0; h < NUM_HEXES; h++) {
-    for (int d = 0; d < 6; d++) {
-      if (s_lifeCells[h * 6 + d]) {
-        uint8_t hue = s_lifeHue[h] + (uint8_t)(d * 8);
-        setHexSideColor(h, d, CRGB(CHSV(hue, 240, 220)));
-      } else {
-        setHexSideColor(h, d, CRGB::Black);
-      }
-    }
-  }
 }
 
 static void tickSparkle(uint32_t elapsed) {
@@ -344,7 +232,6 @@ static void tickEffect() {
   switch (currentEffect) {
     case ANIM_RAINBOW: tickRainbow(elapsed); break;
     case ANIM_PULSE:   tickPulse(elapsed);   break;
-    case ANIM_LIFE:    tickLife(elapsed);    break;
     case ANIM_SPARKLE: tickSparkle(elapsed); break;
     case ANIM_WAVE:    tickWave(elapsed);    break;
     case ANIM_RIPPLE:  tickRipple(elapsed);  break;
@@ -382,6 +269,26 @@ void updateLEDs() {
   }
 
   pushLEDs();
+}
+
+// -----------------------------------------------------------------------------
+// Player edge lighting
+// -----------------------------------------------------------------------------
+void setPlayerEdgeColor(uint8_t playerCount, uint8_t playerIndex, CRGB color) {
+  if (playerCount < 4 || playerCount > 8) return;
+  if (playerIndex >= playerCount) return;
+  const EdgeSide* sides = PLAYER_EDGE_SIDES[playerCount - 4][playerIndex];
+  for (int i = 0; i < MAX_EDGE_SIDES; i++) {
+    if (sides[i].hex == EDGE_SIDE_END) break;
+    setHexSideColor(sides[i].hex, sides[i].dir, color);
+  }
+}
+
+void clearAllPlayerEdgeSides(uint8_t playerCount) {
+  if (playerCount < 4 || playerCount > 8) return;
+  for (uint8_t p = 0; p < playerCount; p++) {
+    setPlayerEdgeColor(playerCount, p, CRGB::Black);
+  }
 }
 
 // -----------------------------------------------------------------------------

@@ -24,6 +24,7 @@
 #include "runtime_settings.h"
 
 #include "led_map.h"
+#include "edge_map.h"
 #include "hex_neighbors.h"
 // ESP32-S3 requires I2S peripheral for FastLED — must be defined before the include
 #define FASTLED_USES_ESP32S3_I2S
@@ -163,12 +164,11 @@ void handleSerialCommand() {
     effectName.toUpperCase();
     if      (effectName == "RAINBOW") startEffect(ANIM_RAINBOW);
     else if (effectName == "PULSE")   startEffect(ANIM_PULSE);
-    else if (effectName == "LIFE")    startEffect(ANIM_LIFE);
     else if (effectName == "RIPPLE")  startEffect(ANIM_RIPPLE);
     else if (effectName == "SPARKLE") startEffect(ANIM_SPARKLE);
     else if (effectName == "WAVE")    startEffect(ANIM_WAVE);
     else if (effectName == "NONE")    stopEffect();
-    else Serial.println(F("Unknown effect. Try: rainbow pulse life ripple sparkle wave none"));
+    else Serial.println(F("Unknown effect. Try: rainbow pulse ripple sparkle wave none"));
 
   // --- bright N ---
   } else if (line.startsWith("bright ")) {
